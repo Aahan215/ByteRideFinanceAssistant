@@ -10,9 +10,8 @@
 | 4 | **UI** | `ui/` | Chat + breakdown table + collapsible SQL/evidence panel. Build against `POST /ask_spec` from hour one |
 | 5 | **QA & story** | `evals/`, deck, architecture diagram, demo script | Own the golden set, run evals after every merge, build the model-comparison table, write the deck |
 
-**Stream 3 should be the Mac owner** (the only machine that can host a model),
-or at minimum that Mac runs Ollama shared on the LAN and stream 3 has access to it.
-That Mac is also the demo machine — treat it accordingly.
+**Stream 3 owns the shared model server.** Nobody else runs Ollama — see
+WORKFLOW.md for why. That machine is also the demo machine, so guard it.
 
 Role 5 is the one teams usually skip and the one that wins. They are the only
 person whose job is to find out whether the thing is actually correct, and the
