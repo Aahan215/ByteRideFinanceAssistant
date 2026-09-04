@@ -1,0 +1,50 @@
+# THE model configuration. Committed on purpose -- this file is the reason
+# five people get identical behaviour.
+#
+# Rule: .env carries ONLY the endpoint (which machine). Everything about how
+# the model behaves lives here, in git, identical for everyone.
+
+host:
+  owner: "TODO: name"        # who runs the server
+  note: "Single shared inference server. Do NOT run your own Ollama."
+
+# Sampling params are baked into derived models on the host (see
+# scripts/build_models.sh), so they cannot drift even if a client forgets
+# to send them.
+roles:
+  router:
+    base: qwen3:0.6b
+    derived: fin-router:v1
+    temperature: 0
+    top_p: 1.0
+    seed: 42
+    num_ctx: 4096            # Ollama silently truncates past num_ctx. Set it
+                             # explicitly or long prompts behave differently
+                             # on different hosts.
+  planner:
+    base: qwen3:8b
+    derived: fin-planner:v1
+    temperature: 0
+    top_p: 1.0
+    seed: 42
+    num_ctx: 8192            # the QuerySpec schema + few-shots are long
+  narrator:
+    base: qwen3:8b
+    derived: fin-narrator:v1
+    temperature: 0.2         # slight variation reads better in prose;
+    top_p: 0.9               # the numeric guard makes this safe
+    seed: 42
+    num_ctx: 4096
+  escalate:
+    base: gpt-oss:20b        # host RAM permitting; else qwen3:14b
+    derived: fin-escalate:v1
+    temperature: 0
+    top_p: 1.0
+    seed: 42
+    num_ctx: 8192
+
+# Self-consistency sampling deliberately overrides temperature at call time.
+# This is the ONE place non-zero sampling is intentional.
+confidence:
+  samples: 3
+  temperature: 0.7

@@ -1,4 +1,4 @@
-.PHONY: setup load test eval run demo checksum clean
+.PHONY: setup load test eval run demo checksum clean model-build model-check
 
 setup:
 	python3 -m venv .venv
@@ -26,3 +26,14 @@ checksum:
 
 clean:
 	rm -rf .pytest_cache app/__pycache__ tests/__pycache__
+
+# --- host only ---
+model-build:
+	./.venv/bin/python scripts/build_models.py
+
+# --- everyone, before you trust any eval number ---
+model-check:
+	./.venv/bin/python scripts/model_check.py
+
+model-lock:
+	./.venv/bin/python scripts/model_check.py --write
