@@ -1,0 +1,74 @@
+"""FastAPI surface. The UI owner codes against THIS, starting hour one."""
+from __future__ import annotations
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+from app.db import anchor_date, run
+from app.spec import QuerySpec
+from app.compiler import compile_sql, compile_evidence_sql
+from app.dates import resolve, describe
+from app import validator, narrator
+
+app = FastAPI(title="Finance Assistant")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+SESSIONS: dict[str, QuerySpec] = {}
+
+
+class Ask(BaseModel):
+    question: str
+    session_id: str = "default"
+
+
+class Answer(BaseModel):
+    answer: str
+    confidence: str = "high"
+    sql: str | None = None
+    window: str | None = None
+    breakdown: list[dict] = []
+    evidence: list[dict] = []
+    warnings: list[str] = []
+    refused: bool = False
+
+
+def answer_spec(spec: QuerySpec, question: str = "") -> Answer:
+    """Everything downstream of the planner. Testable with hand-written specs,
+    which is why the backend team is not blocked on the model team."""
+    v = validator.validate(spec)
+    if not v.ok:
+        return Answer(answer=v.refusal or v.clarification, refused=True, confidence="n/a")
+
+    spec = v.repaired
+    sql, params, meta = compile_sql(spec, anchor_date())
+    df = run(sql, params)
+    ev_sql, ev_params = compile_evidence_sql(spec, anchor_date())
+    ev = run(ev_sql, ev_params)
+
+    window = describe(*resolve(spec.date_range, anchor_date()))
+    text = narrator.narrate(question, df, spec, window)
+
+    return Answer(answer=text, sql=sql, window=window,
+                  breakdown=df.to_dict("records"),
+                  evidence=ev.head(25).to_dict("records"),
+                  warnings=v.warnings)
+
+
+@app.get("/health")
+def health():
+    return {"ok": True, "anchor_date": str(anchor_date())}
+
+
+@app.post("/ask", response_model=Answer)
+def ask(req: Ask):
+    from app.planner import plan
+    prior = SESSIONS.get(req.session_id)
+    spec = plan(req.question, prior)
+    SESSIONS[req.session_id] = spec
+    return answer_spec(spec, req.question)
+
+
+@app.post("/ask_spec", response_model=Answer)
+def ask_spec(spec: QuerySpec):
+    """Bypasses the LLM entirely. Lets the UI and eval work start on day one."""
+    return answer_spec(spec)

@@ -1,0 +1,25 @@
+# Build this BEFORE the UI. It is your accuracy number, your model-choice
+# evidence, and your regression net. Aim for 50 questions.
+# Include unanswerable + ambiguous ones -- a correct refusal scores as correct.
+
+- id: q1
+  question: How much did we spend on vendor payouts last month?
+  expect_spec: {dataset: vendor_payouts, metric: sum_amount, date_range: {kind: relative, unit: month, offset: -1}}
+  expect_value: null   # fill in by hand once data lands
+
+- id: q2
+  question: Which transactions are still unreconciled?
+  expect_spec: {dataset: transactions, filters: {status: unreconciled}, metric: count}
+
+- id: q3
+  question: How does that compare to the month before?
+  follow_up_to: q1
+  expect_spec: {dataset: vendor_payouts, metric: sum_amount, date_range: {kind: relative, unit: month, offset: -2}}
+
+- id: q4_refusal
+  question: What is our headcount forecast for next year?
+  expect_refusal: true   # not in the schema -- must say so, not invent
+
+- id: q5_ambiguous
+  question: How much did we pay Acme?
+  expect_clarification: true   # no date range and possibly multiple Acme entities

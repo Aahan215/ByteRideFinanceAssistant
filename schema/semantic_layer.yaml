@@ -1,0 +1,55 @@
+# THE CONTRACT. Every other module reads this file.
+# PROVISIONAL until the organisers release the real data dictionary.
+# When the real schema lands, ONLY this file should need to change.
+
+anchor:
+  # "today" is the max date in the data, NOT the wall clock.
+  # Prevents every relative-date question returning zero rows during the demo.
+  source: transactions.txn_date
+
+datasets:
+  transactions:
+    table: transactions
+    date_column: txn_date
+    amount_column: amount
+    grain: one row per transaction
+    columns: [txn_id, txn_date, vendor_id, account_code, category, amount, status, description]
+
+  vendor_payouts:
+    table: vendor_payouts
+    date_column: payout_date
+    amount_column: amount
+    grain: one row per payout to a vendor
+    columns: [payout_id, payout_date, vendor_id, amount, status, reference]
+
+# Metrics the planner is allowed to ask for. Nothing else compiles.
+metrics:
+  sum_amount:   {sql: "SUM({amount})",   label: total amount}
+  count:        {sql: "COUNT(*)",        label: number of records}
+  avg_amount:   {sql: "AVG({amount})",   label: average amount}
+  max_amount:   {sql: "MAX({amount})",   label: largest amount}
+  min_amount:   {sql: "MIN({amount})",   label: smallest amount}
+
+# Dimensions the planner may filter or group by. Allow-list = injection-proof.
+dimensions:
+  vendor:
+    column: vendor_id
+    lookup: {table: vendors, key: vendor_id, name: vendor_name}
+  category:     {column: category}
+  account_code: {column: account_code, lookup: {table: chart_of_accounts, key: account_code, name: account_name}}
+  status:       {column: status}
+  month:        {expr: "date_trunc('month', {date})"}
+  quarter:      {expr: "date_trunc('quarter', {date})"}
+
+# Business definitions. Encode these by hand from the data dictionary --
+# do NOT let the model infer what "unreconciled" means.
+status_values:
+  reconciled:   [reconciled, matched, cleared]
+  unreconciled: [unreconciled, unmatched, open]
+  pending:      [pending, in_review]
+
+synonyms:
+  spend:   sum_amount
+  spent:   sum_amount
+  payouts: vendor_payouts
+  bills:   transactions
