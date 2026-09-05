@@ -228,7 +228,9 @@ def _compare(spec: QuerySpec, df, warnings: list[str], scope=None) -> Comparison
         rows.append({key: r[key], "value": now, "previous": was,
                      "delta": None if (now is None or was is None) else round(now - was, 2),
                      "delta_pct": _pct(now, was)})
-    rows.sort(key=lambda x: abs(x["delta"] or 0), reverse=True)
+    # abs(nan) is nan and nan comparisons are all False, so a NaN delta makes
+    # the ordering arbitrary. Treat it as no movement.
+    rows.sort(key=lambda x: abs(_num(x["delta"])), reverse=True)
     return Comparison(window=prev_window, rows=rows[:spec.limit])
 
 

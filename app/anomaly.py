@@ -44,7 +44,14 @@ class Flag:
 
     def sentence(self) -> str:
         from app.narrator import inr          # one currency format across the app
+
         seen = f"across {self.n:,} past transactions"
+        # `not nan` is False, so a NaN typical slipped past the guard below and
+        # the division produced a NaN multiple.
+        bad = [v for v in (self.amount, self.typical)
+               if v is None or (isinstance(v, float) and v != v)]
+        if bad:
+            return f"{self.counterparty}: {inr(self.amount)} ({seen})"
         if not self.typical:
             return f"{self.counterparty}: {inr(self.amount)} ({seen})"
         if self.direction == "high":

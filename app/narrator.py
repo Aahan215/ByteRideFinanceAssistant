@@ -6,9 +6,16 @@ from app.validator import numeric_guard
 # Plain "{:,.2f}" formatting disagrees with the en-IN grouping the UI uses, so
 # the same figure appears two different ways on one screen.
 def inr(x) -> str:
-    if x is None:
+    # round(nan) raises ValueError, and an aggregate over zero rows IS nan.
+    # Every number in the app is formatted here, so this is the right place to
+    # stop NaN rather than at each call site.
+    if x is None or (isinstance(x, float) and x != x):
         return "-"
-    neg, n = x < 0, abs(round(float(x)))
+    try:
+        n = abs(round(float(x)))
+    except (ValueError, OverflowError):
+        return "-"
+    neg = float(x) < 0
     s = str(n)
     if len(s) > 3:                       # 2,02,07,329 -- last 3, then pairs
         head, tail = s[:-3], s[-3:]
@@ -29,6 +36,8 @@ LABELS = {"counterparty": "vendors", "category": "categories", "channel": "chann
 
 
 def _measure(spec, value) -> str:
+    if value is None or (isinstance(value, float) and value != value):
+        return "-"
     return f"{int(value):,}" if spec.metric == "count" else inr(value)
 
 

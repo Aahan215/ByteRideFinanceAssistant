@@ -130,6 +130,9 @@ def main():
                 ans = answer_spec(spec, case["question"])
                 got = metric_value(ans)
                 exp = case["expected_value"]
+                isnan = lambda v: isinstance(v, float) and v != v   # noqa: E731
+                got = None if isnan(got) else got
+                exp = None if isnan(exp) else exp
                 ok = (got is None and exp is None) or (
                     got is not None and exp is not None and abs(got - exp) < 0.01)
                 why = f"value {got} != {exp}"
