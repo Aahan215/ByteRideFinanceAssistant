@@ -164,8 +164,13 @@ def answer_spec(spec: QuerySpec, question: str = "", scope=None) -> Answer:
         pass                          # stats table not built yet -- fine
     except Exception as e:
         warnings.append(f"Anomaly check unavailable: {type(e).__name__}.")
-    if flags:
-        text = narrator.with_anomalies(text, flags)
+    # Anomalies are returned as a structured field and rendered as their own
+    # callouts. Appending them to the sentence too made the answer three times
+    # longer and said the same thing twice.
+    #
+    # The division of labour: `answer` is ONE headline sentence, and structure
+    # lives in the fields built for it -- anomalies, warnings, comparison, the
+    # breakdown table, the chart. Prose is a poor container for a list.
 
     row_count = int(run(*compile_count_sql(spec, anchor_date(), scope=scope)).iloc[0]["n"])
     a = confidence.assess(spec=spec, row_count=row_count, excluded_rows=excluded_rows,

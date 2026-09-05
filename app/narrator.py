@@ -139,7 +139,7 @@ def template(df, spec, window_desc: str) -> str:
     if not spec.group_by:
         label = {"sum_amount": "Total", "count": "Count", "avg_amount": "Average",
                  "max_amount": "Largest", "min_amount": "Smallest"}[spec.metric]
-        return f"{label} for {window_desc}: {_measure(spec, value)}"
+        return f"{label} for {window_desc}: {_measure(spec, value)}."
 
     top = df.iloc[0]
     dim = spec.group_by[0]
@@ -153,11 +153,19 @@ def template(df, spec, window_desc: str) -> str:
     return result
 
 
+def _sentence(text: str) -> str:
+    """Every fragment we append is a new sentence, so the previous one has to be
+    closed. "Rs 1,00,37,55,408 That is up" read as one run-on."""
+    text = text.rstrip()
+    return text if text.endswith((".", "!", "?")) else text + "."
+
+
 def with_comparison(text: str, comp, spec) -> str:
     """Append the period-over-period sentence. Numbers come from the diff the
     engine computed, never from the model."""
     if comp is None:
         return text
+    text = _sentence(text)
     if not spec.group_by:
         if comp.previous is None or comp.value is None:
             return f"{text} No comparable figure for {comp.window}."
