@@ -258,7 +258,9 @@ the team's numbers were produced on.
 
 ## Submission artifacts
 
-- `docs/architecture.md` — architecture diagrams *(generated at submission time)*
+- `ARCHITECTURE.md` — system graph, request sequence diagram, and design principles
+- `docs/architecture.md` — ETL/data path, eval harness, and component table
+- `docs/deploy.md` — deployment guide
 - `docs/sample_qa.md` — sample questions and the answers the assistant actually
   produced *(generated at submission time)*
 - `docs/model_efficiency.md` — which model answered what, escalation rate
