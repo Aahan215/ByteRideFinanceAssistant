@@ -17,6 +17,7 @@ The model NEVER computes a number and never sees a row of data.
 """
 from __future__ import annotations
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -93,6 +94,148 @@ def planner_schema() -> dict:
         },
         "required": ["dataset", "metric", "group_by"],
     }
+
+
+UNCHANGED = "unchanged"
+CLEAR = "none"
+
+
+def refine_schema() -> dict:
+    """A follow-up is a REFINEMENT, not a fresh spec.
+
+    Asking a 4B to "emit only what changed" fails two ways: shown the prior spec
+    as JSON it copies the blob verbatim, and told to omit unchanged fields it
+    cannot decide what to omit. So every field is REQUIRED and carries an
+    explicit "unchanged" sentinel -- the model never makes an omission decision,
+    only picks one token per field from a closed set.
+
+    group_by is a single value, not a list: real refinements regroup by one
+    thing, and a list invited the model to append rather than replace.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "dataset": {"type": "string", "enum": [UNCHANGED] + DATASETS},
+            "metric": {"type": "string", "enum": [UNCHANGED] + METRICS},
+            "group_by": {"type": "string", "enum": [UNCHANGED, CLEAR] + DIMENSIONS},
+            "category": {"type": "string", "enum": [UNCHANGED, CLEAR] + CATEGORIES},
+            "counterparty": {"type": "string"},
+        },
+        "required": ["dataset", "metric", "group_by", "category", "counterparty"],
+    }
+
+
+REFINE_PROMPT = f"""The user asked a question, got an answer, and is now refining it.
+
+WHAT THEY SAW: %s
+
+Decide what their follow-up CHANGES. Every field is required. Use
+"{UNCHANGED}" for anything the follow-up does not mention, and "{CLEAR}" to
+remove a grouping or filter. Reply with JSON only.
+
+dataset    {UNCHANGED} | payouts (spending) | receipts (income) | transactions (both)
+metric     {UNCHANGED} | sum_amount | count | avg_amount | max_amount | min_amount
+group_by   {UNCHANGED} | {CLEAR} | counterparty | category | channel | bank_name | month | quarter
+category   {UNCHANGED} | {CLEAR} | one of {CATEGORIES}
+counterparty  "{UNCHANGED}", "{CLEAR}", or a vendor name
+
+Time periods are handled elsewhere -- ignore any mention of dates.
+
+Examples:
+"break that down by category instead" -> {{"dataset":"{UNCHANGED}","metric":"{UNCHANGED}","group_by":"category","category":"{UNCHANGED}","counterparty":"{UNCHANGED}"}}
+"just show me tax" -> {{"dataset":"{UNCHANGED}","metric":"{UNCHANGED}","group_by":"{UNCHANGED}","category":"TAX","counterparty":"{UNCHANGED}"}}
+"what about receipts?" -> {{"dataset":"receipts","metric":"{UNCHANGED}","group_by":"{UNCHANGED}","category":"{UNCHANGED}","counterparty":"{UNCHANGED}"}}
+"show the count instead" -> {{"dataset":"{UNCHANGED}","metric":"count","group_by":"{UNCHANGED}","category":"{UNCHANGED}","counterparty":"{UNCHANGED}"}}
+"how does that compare to last month?" -> {{"dataset":"{UNCHANGED}","metric":"{UNCHANGED}","group_by":"{UNCHANGED}","category":"{UNCHANGED}","counterparty":"{UNCHANGED}"}}
+"""
+
+
+def describe_spec(s: QuerySpec) -> str:
+    """The prior turn in English. Showing it as JSON makes small models copy the
+    blob verbatim -- three different follow-ups returned byte-identical output."""
+    parts = [{"payouts": "total money going out", "receipts": "total money coming in",
+              "transactions": "all transactions"}[s.dataset]]
+    parts[0] = {"sum_amount": parts[0], "count": "the number of " + s.dataset,
+                "avg_amount": "the average " + s.dataset,
+                "max_amount": "the largest of " + s.dataset,
+                "min_amount": "the smallest of " + s.dataset}[s.metric]
+    if s.group_by:
+        parts.append("broken down by " + ", ".join(s.group_by))
+    active = {k: v for k, v in s.filters.model_dump().items() if v is not None}
+    if active:
+        parts.append("filtered to " + ", ".join(f"{k} {v}" for k, v in active.items()))
+    return ", ".join(parts)
+
+
+def apply_refinement(prior: QuerySpec, r: dict) -> QuerySpec:
+    """Deterministic application. REPLACE semantics, never merge -- the model
+    appending to group_by instead of replacing it was a real failure."""
+    spec = prior.model_copy(deep=True)
+
+    if (v := r.get("dataset")) and v not in (UNCHANGED, CLEAR) and v in DATASETS:
+        spec.dataset = v
+    if (v := r.get("metric")) and v not in (UNCHANGED, CLEAR) and v in METRICS:
+        spec.metric = v
+
+    v = r.get("group_by")
+    if v == CLEAR:
+        spec.group_by = []
+    elif v and v != UNCHANGED and v in DIMENSIONS:
+        spec.group_by = [v]
+
+    v = r.get("category")
+    if v == CLEAR:
+        spec.filters.category = None
+    elif v and v != UNCHANGED and v in CATEGORIES:
+        spec.filters.category = v
+
+    v = r.get("counterparty")
+    if v == CLEAR:
+        spec.filters.counterparty = None
+    elif v and v not in (UNCHANGED, CLEAR):
+        from app.enrich import normalise
+        spec.filters.counterparty = normalise(str(v)) or None
+    return spec
+
+
+# The model answers "unchanged" for everything when it is unsure, which is safe
+# but useless. Dataset direction is highly regular in English, so decide it
+# deterministically -- the same lever that made dates reliable.
+DATASET_CUES = (
+    ("receipts", re.compile(r"\b(receipts?|income|credits?|came in|coming in|"
+                            r"received|inflow|earn(ed|ings)?|deposits?)\b", re.I)),
+    ("payouts", re.compile(r"\b(payouts?|spend(ing)?|spent|paid|pay|debits?|"
+                           r"went out|going out|outflow|expenses?)\b", re.I)),
+    ("transactions", re.compile(r"\b(all transactions|everything|both|"
+                                r"all of them|overall)\b", re.I)),
+)
+
+
+def dataset_from_words(question: str) -> str | None:
+    """Only fires on an explicit cue, so a follow-up that says nothing about
+    direction leaves the prior dataset alone."""
+    for name, rx in DATASET_CUES:
+        if rx.search(question):
+            return name
+    return None
+
+
+COMPARE_RE = re.compile(
+    r"\b(compare[ds]?|versus|\bvs\b|month before|period before|previous (month|period|quarter|year))",
+    re.I)
+
+
+def patch_schema() -> dict:
+    """Same shape, nothing required.
+
+    A follow-up must be able to emit ONLY what changed. Reusing the planner
+    schema here forced dataset/metric/group_by into every patch, so each
+    follow-up overwrote the prior turn with defaults -- multi-turn scored 0/5
+    on qwen3:4b while every other bucket was fine.
+    """
+    s = planner_schema()
+    s.pop("required", None)
+    return s
 
 
 class CoercionError(ValueError):
@@ -383,11 +526,12 @@ class PlanResult:
     used_patch: bool = False
 
 
-def _call(chat_fn: ChatFn | None, system: str, user: str, temperature: float | None) -> dict:
+def _call(chat_fn: ChatFn | None, system: str, user: str, temperature: float | None,
+          schema: dict | None = None) -> dict:
     if chat_fn is not None:                 # tests inject a stand-in
         return chat_fn("planner", system, user, temperature=temperature)
     return chat_json("planner", system, user, temperature=temperature,
-                     schema=planner_schema())
+                     schema=schema or planner_schema())
 
 
 def plan_detailed(question: str, prior: QuerySpec | None = None, *,
@@ -399,14 +543,33 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
 
     if looks_like_followup(question, prior):
         used_patch = True
-        raw = _call(chat_fn, PATCH_PROMPT % (prior.model_dump_json(), question),
-                    question, temperature)
+        raw = _call(chat_fn, REFINE_PROMPT % describe_spec(prior), question,
+                    temperature, schema=refine_schema())
         attempts.append(json.dumps(raw)[:400])
         try:
-            spec = prior.merge_patch(coerce(raw, patch=True) if raw else {})
+            # Legacy patch shape (tests, and any model that ignores the
+            # sentinel vocabulary) still merges the old way.
+            spec = (apply_refinement(prior, raw) if isinstance(raw, dict)
+                    and "dataset" in raw and raw.get("dataset") in
+                    ([UNCHANGED] + DATASETS) and "counterparty" in raw
+                    else prior.merge_patch(coerce(raw, patch=True) if raw else {}))
         except CoercionError:
-            # a bad patch must not corrupt a good prior turn
-            spec = prior
+            spec = prior            # a bad refinement must not corrupt a good turn
+
+        if (ds := dataset_from_words(question)) and ds != spec.dataset:
+            spec = spec.model_copy(update={"dataset": ds})
+
+        # Period-over-period is deterministic: the comparison window is the
+        # prior window shifted back by its own span, so the two are always the
+        # same length. Asking the model for this only introduced mismatches.
+        if COMPARE_RE.search(question) and spec.date_range.kind == "relative":
+            base = dr or spec.date_range
+            spec = spec.model_copy(update={
+                "date_range": base,
+                "compare_to": base.model_copy(
+                    update={"offset": base.offset - max(base.periods, 1)}),
+            })
+            dr = None
     else:
         raw = _call(chat_fn, _prompt(), question, temperature)
         attempts.append(json.dumps(raw)[:400])

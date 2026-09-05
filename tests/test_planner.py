@@ -169,3 +169,46 @@ def test_the_planner_schema_only_allows_real_values():
     assert s["properties"]["dataset"]["enum"] == DATASETS
     assert s["properties"]["metric"]["enum"] == METRICS
     assert "UNCATEGORISED" not in s["properties"]["filters"]["properties"]["category"]["enum"]
+
+
+def test_the_patch_schema_requires_nothing():
+    """A follow-up must be able to emit only what changed. Requiring
+    dataset/metric/group_by made every patch a full spec that overwrote the
+    prior turn -- multi-turn scored 0/5 because of it."""
+    from app.planner import planner_schema, patch_schema
+    assert "required" in planner_schema()
+    assert "required" not in patch_schema()
+    assert patch_schema()["properties"].keys() == planner_schema()["properties"].keys()
+
+
+def test_dataset_direction_is_decided_deterministically():
+    """qwen3:4b answered "unchanged" for every field on "what about receipts?",
+    which is safe but useless. Direction words are regular enough to decide
+    without the model."""
+    from app.planner import dataset_from_words
+    assert dataset_from_words("What about receipts?") == "receipts"
+    assert dataset_from_words("how much came in instead?") == "receipts"
+    assert dataset_from_words("what did I spend?") == "payouts"
+    assert dataset_from_words("show me all transactions") == "transactions"
+    # says nothing about direction -> leave the prior dataset alone
+    assert dataset_from_words("break that down by category") is None
+    assert dataset_from_words("what about last month?") is None
+
+
+def test_refinement_replaces_group_by_rather_than_appending():
+    from app.planner import apply_refinement, UNCHANGED
+    prior = QuerySpec(dataset="payouts", group_by=["counterparty"])
+    out = apply_refinement(prior, {"dataset": UNCHANGED, "metric": UNCHANGED,
+                                   "group_by": "category", "category": UNCHANGED,
+                                   "counterparty": UNCHANGED})
+    assert out.group_by == ["category"]
+
+
+def test_refinement_leaves_untouched_fields_alone():
+    from app.planner import apply_refinement, UNCHANGED
+    prior = QuerySpec(dataset="payouts", metric="sum_amount",
+                      group_by=["counterparty"], filters=Filters(category="TAX"))
+    out = apply_refinement(prior, {k: UNCHANGED for k in
+                                   ("dataset", "metric", "group_by", "category", "counterparty")})
+    assert out.dataset == "payouts" and out.group_by == ["counterparty"]
+    assert out.filters.category == "TAX"
