@@ -3,20 +3,10 @@
 # bank -> account -> transaction. Indian bank narrations, INR, single company.
 
 anchor:
-  # What "today" means when resolving "this month", "last quarter", etc.
-  #
-  #   data        the latest transaction in the dataset  (default)
-  #   wall_clock  the real current date
-  #
-  # Override per-process with FINANCE_ANCHOR_MODE=data|wall_clock.
-  #
-  # `data` is the right default for a historical export: this dataset ends
-  # 2026-06-30, so wall-clock "this month" matches ZERO rows and the assistant
-  # answers "no transactions found" for every relative-date question -- a
-  # silent, confident wrong answer. Use `wall_clock` only when the data is
-  # live and current; the app warns when the two disagree.
-  mode: data
-  source: transaction.transaction_date
+  # "today" = the current wall clock date.
+  # Relative date phrases like "this month" and "last quarter" resolve
+  # against today's date.
+  source: wall_clock
 
 # The one queryable view. Built at load time in scripts/load_data.py so the
 # joins and the parsed counterparty are already materialised.
@@ -87,18 +77,8 @@ reference_columns:
   default: transaction_reference_id
   explicit_utr: utr_number
 
-# Money you cannot simply choose to spend less of this month. Used when someone
-# asks where they could save: ranking EMI, rent, insurance and tax alongside
-# groceries is misleading, and INVESTMENT is saving, not spending at all.
-committed_categories: [TAX, EMI_LOAN, RENT, INSURANCE, INVESTMENT,
-                       INTEREST, BANK_CHARGES, SALARY]
-
 spend_categories: [TAX, BANK_CHARGES, INTEREST, EMI_LOAN, SALARY, UTILITIES,
-                   INSURANCE, INVESTMENT, CASH, CHEQUE, RENT,
-                   # derived from the MERCHANT rather than the narration keywords
-                   FOOD, GROCERIES, FUEL, HEALTHCARE, JEWELLERY, APPAREL,
-                   ELECTRONICS, HOME,
-                   TRANSFER, UNCATEGORISED]
+                   INSURANCE, INVESTMENT, CASH, CHEQUE, RENT, TRANSFER, UNCATEGORISED]
 
 synonyms:
   spend:       {dataset: payouts, metric: sum_amount}
