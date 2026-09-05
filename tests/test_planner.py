@@ -118,3 +118,21 @@ def test_followup_detection():
     assert looks_like_followup("compare to May", prior)
     assert not looks_like_followup("how much tax did I pay in the last 3 months", prior)
     assert not looks_like_followup("what about last month?", None)
+
+
+def test_a_short_unrelated_question_is_not_a_followup():
+    """Regression: "Which transactions are unreconciled?" is four words, was
+    treated as a refinement, and silently inherited the previous turn's vendor
+    filter -- turning a correct refusal into a confident wrong answer."""
+    prior = QuerySpec(dataset="payouts", filters=Filters(counterparty="ZOMATO HYPERPURE"))
+    assert not looks_like_followup("Which transactions are unreconciled?", prior)
+    assert not looks_like_followup("What is my credit score?", prior)
+    assert not looks_like_followup("Total tax paid?", prior)
+
+
+def test_genuine_followups_are_still_detected():
+    prior = QuerySpec(dataset="payouts")
+    for q in ["what about the month before that?", "And the 3 months before that?",
+              "Just show me tax", "Break that down by category instead",
+              "How does that compare?", "same for last quarter"]:
+        assert looks_like_followup(q, prior), q

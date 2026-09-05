@@ -185,17 +185,35 @@ Follow-up: "how about receipts?"
 Follow-up: %s
 """
 
-FOLLOWUP_HINTS = ("what about", "how about", "and what", "compare", "vs ",
-                  "versus", "same for", "that", "those", "it ", "instead",
-                  "break that", "drill", "show me", "now ", "also ",
-                  "the same", "similar", "but for", "but with")
+# A follow-up must SAY it is one: anaphora, an explicit comparison, or a
+# refinement of what was just asked. Each entry is matched with surrounding
+# spaces, so "it" cannot fire inside "cred-it score".
+FOLLOWUP_HINTS = (
+    "what about", "how about", "and what", "and the", "and just",
+    "compare", "versus", " vs ", "same for", "the same", "similar",
+    " that ", " that?", " those ", " those?", " it ", " it?",
+    "instead", "but for", "but with", "just show", "just the",
+    "only the", "narrow", "drill", "break it", "break that", "what if",
+)
 
 
 def looks_like_followup(question: str, prior: QuerySpec | None) -> bool:
+    """Deliberately conservative -- a follow-up must announce itself.
+
+    A SHORT question is not a follow-up. "Which transactions are unreconciled?"
+    is four words and entirely unrelated to whatever came before; the old
+    `len(q.split()) <= 5` rule classified it as a refinement, which silently
+    inherited the previous turn's vendor filter and turned a correct refusal
+    into a confident wrong answer.
+
+    Erring this way costs a little context the user can restate. Erring the
+    other way fabricates an answer, which is the failure this whole system
+    exists to prevent.
+    """
     if prior is None:
         return False
-    q = question.lower().strip()
-    return any(h in q for h in FOLLOWUP_HINTS) or len(q.split()) <= 5
+    q = f" {question.lower().strip()} "
+    return any(h in q for h in FOLLOWUP_HINTS)
 
 
 # --- deterministic repair of predictable small-model mistakes ---------------

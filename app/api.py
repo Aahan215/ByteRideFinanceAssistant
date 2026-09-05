@@ -224,8 +224,9 @@ def ask(req: Ask):
         # Development aid only -- see app/stub_planner.py.
         from app.stub_planner import plan as stub_plan
         spec = stub_plan(req.question, prior)
-        SESSIONS[req.session_id] = spec
         out = answer_spec(spec, req.question)
+        if not out.refused:
+            SESSIONS[req.session_id] = spec
         out.confidence = "n/a"
         out.warnings.insert(0, "STUB PLANNER — keyword rules, not the language "
                                "model. Unset FINANCE_STUB_PLANNER before demoing.")
@@ -237,8 +238,14 @@ def ask(req: Ask):
     except ModelUnavailable as e:
         return Answer(answer=str(e), refused=True, confidence="n/a")
 
-    SESSIONS[req.session_id] = result.spec
     out = answer_spec(result.spec, req.question)
+
+    # Only a turn we could actually answer becomes context for the next one.
+    # Storing a refusal means the follow-up ("how does that compare?") refines
+    # the thing we just declined to answer, instead of the last real result.
+    if not out.refused:
+        SESSIONS[req.session_id] = result.spec
+
     if not out.refused:
         # Fold the model's self-consistency into the deterministic assessment
         # rather than replacing it -- both signals matter.
