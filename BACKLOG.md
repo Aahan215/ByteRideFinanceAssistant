@@ -1,86 +1,101 @@
-# Backlog — ticket-level breakdown
+# Backlog
 
 Sizing: **S** ≈ 1h · **M** ≈ 2–4h · **L** ≈ half a day.
-Copy this into GitHub Issues (or a Projects board) so blockers are visible.
+Copy into GitHub Issues so blockers are visible.
 
 ---
 
-## Stream 1 — Data & semantics
+## Already done (on `main`)
+
+| Area | State |
+|---|---|
+| DuckDB loader, 3-table schema, rollups | working, `make load` |
+| Sample seed (10 rows/table) | working — team is unblocked before the export lands |
+| Counterparty parser (UPI/IMPS/NEFT/FT/…) | working, 6 narration formats |
+| Spend-category classifier incl. TAX | working, word-bounded |
+| Semantic layer, QuerySpec, SQL compiler | working, parameterised, allow-listed |
+| Sensitive-column masking (in SQL) | working |
+| Validator: refuse / clarify / closed-vs-open vocab | working |
+| Anchor-date resolution | working |
+| `POST /ask_spec` — full pipeline, no model | working |
+| AES-256 module + crypto probe | written, needs the real export |
+| Model shim, committed model config, drift check | working |
+| 17 tests | passing |
+
+**Not started: the planner, the narrator's LLM path, the UI, the golden set.**
+
+---
+
+## Stream 1 — Data & crypto
 
 | # | Ticket | Size | Notes |
 |---|---|---|---|
-| D1 | Load CSVs into DuckDB, assert row counts match source | S | `make load` |
-| D2 | **Profile every column** and post findings to team chat | M | **Do this first — it unblocks everyone.** Distinct values of `status` and `category`, date min/max, null rates, currency field |
-| D3 | Hand-write `semantic_layer.yaml` from the real data dictionary | M | Especially: what *exactly* counts as unreconciled |
-| D4 | Sign conventions + data quality note | S | Are refunds/credits negative? Duplicate txn ids? Judges will ask |
-| D5 | Rollup tables (vendor×month, category×month, status×month) | M | Pair with E2 |
-| D6 | Vendor name → id lookup + alias table for fuzzy matching | M | Feeds the validator |
+| D1 | `make crypto-probe` on the real export, post output to chat | S | **Blocks the crypto design. Do first.** |
+| D2 | Profile every column; post distinct values, null rates, date range | M | **Unblocks everyone.** |
+| D3 | Wire decryption / tokenisation into the loader per D1's finding | M | ETL only — never at query time |
+| D4 | Tune the TAX rules against the real corpus | M | A whole question depends on it; sample has zero tax rows |
+| D5 | Vendor name noise — build a place list, stop `X` and `X DAHISAR EAST` splitting | M | Silently corrupts "where did I spend most" |
+| D6 | Report UNCATEGORISED % and parse coverage | S | Goes in the deck |
+| D7 | Negative `available_balance` — ask the organisers | S | |
 
-## Stream 2 — Deterministic engine
+## Stream 2 — Engine
 
 | # | Ticket | Size | Notes |
 |---|---|---|---|
-| E1 | Refusal + clarification paths wired through `/ask` | M | Guardrails are a *scored* requirement, not polish |
-| E2 | Route specs to rollup tables when the grain allows | M | Demo latency |
-| E3 | **Comparison queries as a first-class feature** | M | See gap note below |
+| E1 | Implement `compare_to` in the API (run twice, diff) | M | Field exists in the spec; API ignores it |
+| E2 | Entity scope enforced on every query | S | "my spends" needs an owner |
+| E3 | Route to `rollup_counterparty_month` when the grain allows | M | Demo latency |
 | E4 | CSV / Excel export endpoint | S | Free "good to have" points |
-| E5 | Anomaly z-score flags on returned rows | M | Bonus |
-| E6 | Evidence drill-down: pagination + row limits | S | |
-| E7 | Unit tests for every date unit and offset | M | Off-by-one on month boundaries is the likeliest silent bug |
+| E5 | Anomaly z-score flags | M | Bonus |
+| E6 | Tests for every date unit × offset × periods | M | Month-boundary off-by-one is the likeliest silent bug |
 
-> **Known gap:** `QuerySpec` today expresses *one* query. "How does that compare
-> to the month before?" needs two results and a delta. Decide early: either add a
-> `compare_to: DateRange` field to the spec, or have the API run the spec twice
-> and diff. Whoever owns E3 makes the call and tells Stream 3 — it changes the
-> planner's prompt.
-
-## Stream 3 — Model & planner
+## Stream 3 — Model
 
 | # | Ticket | Size | Notes |
 |---|---|---|---|
-| M1 | Ollama on the LAN, `.env` distributed to the team | S | Unblocks everyone else's model testing |
-| M2 | `plan()` → valid QuerySpec with few-shot examples | **L** | The core of the project |
-| M3 | Retry/repair loop on invalid JSON or schema violation | M | Small models need this; do not skip it |
-| M4 | Multi-turn patch mode using `merge_patch()` | M | |
-| M5 | `narrate()` + numeric guard integration | M | Regenerate once on guard failure, then fall back to template |
-| M6 | Router tier + escalation on low confidence | M | Feeds the efficiency report |
-| M7 | Self-consistency confidence (sample 3× at temp 0.7) | M | Bonus |
+| M1 | `make model-build` + `model-lock`, share endpoint | S | **Unblocks everyone's model testing** |
+| M2 | `plan()` → valid QuerySpec, few-shot prompts | **L** | The core of the project |
+| M3 | Retry/repair on invalid JSON or schema violation | M | Small models need this |
+| M4 | Multi-turn patch mode via `merge_patch()` | M | |
+| M5 | `narrate()` + numeric guard wired in | M | Regenerate once, then fall back to template |
+| M6 | Router tier + escalation | M | Feeds the efficiency report |
+| M7 | Self-consistency confidence | M | Bonus |
 
 ## Stream 4 — UI
 
 | # | Ticket | Size | Notes |
 |---|---|---|---|
-| U1 | Chat shell wired to `POST /ask_spec` | M | Start here — no model dependency |
-| U2 | Breakdown table rendering | S | |
-| U3 | **Collapsible SQL + evidence rows panel** | M | The single most valuable UI element you will build |
+| U1 | Chat shell on `POST /ask_spec` | M | **Start here — zero model dependency** |
+| U2 | Breakdown table | S | |
+| U3 | Collapsible SQL + masked evidence rows | M | Highest-value element you will build |
 | U4 | Refusal / clarification / warning states | M | Must look intentional, not like an error |
 | U5 | Confidence badge + anomaly flags | S | |
 | U6 | Export button | S | |
-| U7 | Anchor-date banner: "data through March 2024" | S | Stops judges thinking dates are broken |
+| U7 | Anchor-date banner: "data through 24 Jun 2026" | S | Stops judges thinking dates are broken |
 
 ## Stream 5 — QA & story
 
 | # | Ticket | Size | Notes |
 |---|---|---|---|
-| Q1 | Collect 50 golden questions (10 from each teammate) | M | Day one |
-| Q2 | Hand-verify expected answers by writing the SQL yourself | **L** | Tedious, and it is the whole point |
-| Q3 | Eval runner → accuracy table, run after every merge | M | `make eval` |
-| Q4 | Model comparison: 3B vs 8B vs 20B on the golden set | M | This table *is* your model-efficiency score |
+| Q1 | 50 golden questions (10 per person) | M | **Day one, no dependencies** |
+| Q2 | Hand-verify expected answers by writing the SQL yourself | **L** | Tedious; it is the whole point |
+| Q3 | Eval runner after every merge | M | `make eval` |
+| Q4 | Model comparison: 0.6B vs 8B vs 20B on the golden set | M | **This table is your model-efficiency score** |
 | Q5 | Architecture diagram | S | |
-| Q6 | Deck: problem, approach, model rationale, demo flow | M | |
-| Q7 | Demo script + two full rehearsals | M | Last 2 hours |
+| Q6 | Deck: problem, approach, model rationale, demo | M | |
+| Q7 | Demo script + two rehearsals | M | Last 2 hours |
 
 ---
 
-## Dependency map
+## Critical path
 
 ```
-D2 (profile) ──┬──> D3 (semantic layer) ──> M2 (planner prompt)
-               └──> Q1/Q2 (golden set)
-M1 (ollama LAN) ─────────────────────────> M2, and everyone's model testing
-E3 decision ─────────────────────────────> M2 prompt design
-U1 needs nothing but /ask_spec, which already works
+D1 crypto-probe ─┐
+D2 column profile ├─> D3 loader wiring ─> everything touching real data
+M1 model server ──┴─> M2 planner ─> M5 narrator ─> end-to-end /ask
+Q1 golden set ────────────────────> Q3 eval runner ─> Q4 model comparison
+U1 chat UI ── depends on nothing (uses /ask_spec)
 ```
 
-Only three things are truly blocking: **D2, M1, and the E3 decision.**
-Get all three done in the first three hours.
+Only **D1, D2, M1 and Q1** are truly blocking. All four are doable in the first
+three hours and none depend on each other.

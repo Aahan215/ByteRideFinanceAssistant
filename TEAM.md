@@ -4,11 +4,11 @@
 
 | Owner | Stream | Files they own | First task |
 |---|---|---|---|
-| 1 | **Data & semantics** | `scripts/load_data.py`, `schema/semantic_layer.yaml`, rollups | Load the CSVs, then hand-encode what "unreconciled", each account type, and each status value actually mean |
-| 2 | **Deterministic engine** | `app/compiler.py`, `validator.py`, `dates.py` | Refusal + clarification paths, then anomaly z-scores and CSV/Excel export |
+| 1 | **Data & crypto** | `scripts/load_data.py`, `app/enrich.py`, `app/crypto.py`, `schema/semantic_layer.yaml` | Run `make crypto-probe`, profile every column, then tune the TAX and vendor-name rules on the real corpus |
+| 2 | **Engine** | `app/compiler.py`, `validator.py`, `dates.py`, `api.py` | `compare_to` for period-over-period, entity scope, then export and anomalies |
 | 3 | **Model & planner** | `app/planner.py`, `narrator.py`, `llm.py` | Hosts Ollama. Get `plan()` emitting valid QuerySpecs, then the cascade + self-consistency confidence |
 | 4 | **UI** | `ui/` | Chat + breakdown table + collapsible SQL/evidence panel. Build against `POST /ask_spec` from hour one |
-| 5 | **QA & story** | `evals/`, deck, architecture diagram, demo script | Own the golden set, run evals after every merge, build the model-comparison table, write the deck |
+| 5 | **QA & story** | `evals/`, deck, diagram, demo script | Own the golden set, run evals after every merge, build the model-comparison table, write the deck |
 
 **Stream 3 owns the shared model server.** Nobody else runs Ollama — see
 WORKFLOW.md for why. That machine is also the demo machine, so guard it.
@@ -29,23 +29,26 @@ deck is 5% plus they feed the model-choice bonus.
 
 ## Sequence
 
-**Phase 1 — foundations (everyone, day one)**
-Data loaded · semantic layer hand-written · 50 golden questions · Ollama shared on LAN
+**Phase 1 — unblock (first 3 hours, everyone)**
+`make crypto-probe` · column profile · model server up · 50 golden questions
 
 **Phase 2 — parallel build**
-1 rollups · 2 refusals+export · 3 planner hitting valid specs · 4 chat UI on `/ask_spec` · 5 eval runner
+1 crypto wiring + TAX/vendor tuning · 2 `compare_to` + entity scope ·
+3 planner emitting valid specs · 4 chat UI on `/ask_spec` · 5 eval runner
 
 **Phase 3 — integration**
-Wire `/ask` end to end · numeric guard on · run the golden set · fix what fails
+`/ask` end to end · numeric guard on · run the golden set · fix what fails
 
 **Phase 4 — points**
-Cascade + escalation rate · confidence signalling · anomaly callouts ·
-model-comparison table (8B vs 20B vs 3B accuracy) · deck · demo rehearsal
+Cascade + escalation rate · confidence · anomalies · export ·
+model-comparison table · deck · demo rehearsal
 
 ## Demo script (draft — role 5 owns this)
 
-1. "How much did we spend on vendor payouts last month?" → number + breakdown
-2. Expand the SQL panel → "this is the query, these are the rows"
+1. "Where did I spend the most this month?" → ranked breakdown
+2. Expand the SQL panel → "this is the query, these are the rows" (PII masked)
 3. "How does that compare to the month before?" → multi-turn, no context repeated
-4. "What's our headcount forecast?" → **refuses cleanly**. This is the money shot.
-5. Show the efficiency report: which model answered what, escalation rate
+4. "Total tax I paid in the last 3 months" → derived category, shown as derived
+5. "Which transactions are unreconciled?" → **refuses cleanly: not in the data.**
+   The money shot.
+6. Efficiency report: which model answered what, escalation rate
