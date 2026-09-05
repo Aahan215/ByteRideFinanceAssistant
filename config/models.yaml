@@ -23,7 +23,7 @@ provider: gemini
 host:
   owner: "TODO: name"        # who runs the server
   ram_gb: 16                 # drives the model sizes below
-  family: qwen2.5            # one family throughout -- prompt behaviour differs
+  family: qwen3              # one family throughout -- prompt behaviour differs
                              # enough between families that re-tuning the planner
                              # few-shots mid-hackathon would cost hours
   note: "Single shared inference server. Do NOT run your own Ollama."
@@ -31,9 +31,9 @@ host:
 # Candidates for the model-efficiency table (BACKLOG Q4). Not used at runtime;
 # `make eval-compare` runs the golden set across them.
 comparison:
-  - qwen2.5:3b
-  - llama3.2:3b
-  - qwen2.5:7b
+  - qwen3:1.7b
+  - qwen3:4b
+  - qwen3:8b
 
 # Hosted fallbacks -- open weights, published sizes, nothing to download.
 # Switch by setting `provider: hosted` above plus LLM_BASE_URL/LLM_API_KEY,
@@ -78,7 +78,10 @@ roles:
     num_ctx: 4096
   escalate:
     base: gemini-2.5-flash
-    ollama_base: qwen3:4b
+    ollama_base: qwen3:8b    # MUST differ from the planner -- escalating to the
+                             # same model does nothing, and the escalation rate
+                             # is the evidence behind the efficiency claim.
+                             # 16GB host: 4B + 8B co-resident is ~7.5GB.
     derived: fin-escalate:v1
     temperature: 0
     top_p: 1.0
