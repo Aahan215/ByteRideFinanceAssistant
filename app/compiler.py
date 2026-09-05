@@ -48,13 +48,18 @@ def compile_sql(spec: QuerySpec, anchor, date_range=None) -> tuple[str, list, di
 
     metric_sql = SEMANTIC["metrics"][spec.metric]["sql"].format(amount=amt_col)
 
-    selects, groups = [], []
+    selects, groups, notnull = [], [], []
     for dim in spec.group_by:
         expr = _dim_expr(dim, date_col)
         selects.append(f"{expr} AS {dim}")
         groups.append(expr)
+        # A NULL group key is not a vendor. Left in, the pooled tax/charges/cash
+        # rows top every "where did I spend the most" ranking as a phantom
+        # entry. Excluded here and reported separately, never silently dropped.
+        notnull.append(f"{expr} IS NOT NULL")
 
     where, params = _where(spec, date_col, amt_col)
+    where.extend(notnull)
     if ds.get("fixed_filter"):          # payouts = debits, receipts = credits
         where.insert(0, ds["fixed_filter"])
 
@@ -74,6 +79,26 @@ def compile_sql(spec: QuerySpec, anchor, date_range=None) -> tuple[str, list, di
     return sql, params, {"window": (start, end), "view": view}
 
 
+def compile_null_group_sql(spec: QuerySpec, anchor) -> tuple[str, list] | None:
+    """How much of the total is in rows the group dimension cannot name.
+    Surfaced as a warning so a ranking never quietly omits real money."""
+    if not spec.group_by:
+        return None
+    ds = SEMANTIC["datasets"][spec.dataset]
+    view, date_col, amt_col = ds["view"], ds["date_column"], ds["amount_column"]
+    where, params = _where(spec, date_col, amt_col)
+    if ds.get("fixed_filter"):
+        where.insert(0, ds["fixed_filter"])
+    where.append(f"{_dim_expr(spec.group_by[0], date_col)} IS NULL")
+    start, end = resolve(spec.date_range, anchor)
+    if start:
+        where.append(f"{date_col} >= ?"); params.append(start)
+    if end:
+        where.append(f"{date_col} < ?"); params.append(end)
+    return (f"SELECT SUM({amt_col}) AS excluded, COUNT(*) AS rows FROM {view} "
+            f"WHERE {' AND '.join(where)}"), params
+
+
 def evidence_columns() -> str:
     """The drill-down projection. Sensitive columns are masked in SQL so raw
     values never reach the API layer, let alone the model or the screen."""
@@ -83,7 +108,9 @@ def evidence_columns() -> str:
     masked = []
     for col, rule in SENSITIVE.items():
         if rule["mask"] == "last4":
-            masked.append(f"concat('XXXXXX', right({col}, 4)) AS {col}")
+            # CAST is required: DuckDB infers a numeric account_number from CSV,
+            # and right() only accepts VARCHAR.
+            masked.append(f"concat('XXXXXX', right(CAST({col} AS VARCHAR), 4)) AS {col}")
         else:
             masked.append(f"CASE WHEN {col} IS NULL THEN NULL ELSE '[redacted]' END AS {col}")
     return ", ".join(cols + masked)

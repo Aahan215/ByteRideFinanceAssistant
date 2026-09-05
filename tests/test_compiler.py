@@ -55,3 +55,25 @@ def test_multi_turn_patch_keeps_prior_context():
                      date_range=DateRange(kind="relative", unit="month", offset=-1))
     nxt = base.merge_patch({"date_range": {"offset": -2}})
     assert nxt.dataset == "payouts" and nxt.date_range.offset == -2
+
+
+def test_masking_survives_a_numeric_account_number():
+    # DuckDB infers account_number as BIGINT from CSV; right() needs VARCHAR
+    from app.compiler import evidence_columns
+    cols = evidence_columns()
+    assert "CAST(account_number AS VARCHAR)" in cols
+    assert "utr_number" in cols and "[redacted]" in cols
+
+
+def test_grouped_queries_exclude_null_group_keys():
+    # a NULL counterparty is not a vendor; leaving it in makes tax + charges
+    # top every spend ranking as a phantom entry
+    sql, _, _ = compile_sql(QuerySpec(dataset="payouts", group_by=["counterparty"]), ANCHOR)
+    assert "counterparty IS NOT NULL" in sql
+
+
+def test_null_group_total_is_reported_not_dropped():
+    from app.compiler import compile_null_group_sql
+    out = compile_null_group_sql(QuerySpec(dataset="payouts", group_by=["counterparty"]), ANCHOR)
+    assert out and "counterparty IS NULL" in out[0]
+    assert compile_null_group_sql(QuerySpec(dataset="payouts"), ANCHOR) is None

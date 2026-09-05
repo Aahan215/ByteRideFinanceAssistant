@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from app.db import anchor_date, run
 from app.spec import QuerySpec
-from app.compiler import compile_sql, compile_evidence_sql
+from app.compiler import compile_sql, compile_evidence_sql, compile_null_group_sql
 from app.dates import resolve, describe
 from app import validator, narrator
 
@@ -14,6 +14,13 @@ app = FastAPI(title="Finance Assistant")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 SESSIONS: dict[str, QuerySpec] = {}
+
+
+def _clean(df) -> list[dict]:
+    """pandas turns SQL NULL into NaN, which serialises as the string 'nan' and
+    reaches the user as a fake value. Put real nulls back."""
+    import pandas as pd
+    return df.astype(object).where(pd.notna(df), None).to_dict("records")
 
 
 class Ask(BaseModel):
@@ -48,10 +55,20 @@ def answer_spec(spec: QuerySpec, question: str = "") -> Answer:
     window = describe(*resolve(spec.date_range, anchor_date()))
     text = narrator.narrate(question, df, spec, window)
 
+    warnings = list(v.warnings)
+    nulls = compile_null_group_sql(spec, anchor_date())
+    if nulls:
+        nrow = run(*nulls)
+        excluded, nrows = nrow.iloc[0]["excluded"], int(nrow.iloc[0]["rows"])
+        if nrows:
+            warnings.append(
+                f"{excluded:,.2f} across {nrows:,} transactions has no "
+                f"{spec.group_by[0]} we could identify (tax, bank charges and "
+                f"cash have no payee) and is not in this breakdown.")
+
     return Answer(answer=text, sql=sql, window=window,
-                  breakdown=df.to_dict("records"),
-                  evidence=ev.head(25).to_dict("records"),
-                  warnings=v.warnings)
+                  breakdown=_clean(df), evidence=_clean(ev.head(25)),
+                  warnings=warnings)
 
 
 @app.get("/health")
