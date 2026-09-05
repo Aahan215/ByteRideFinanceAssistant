@@ -62,6 +62,38 @@ DIM_ALIASES = {
 }
 WRAPPER_KEYS = ("query", "spec", "queryspec", "query_spec", "result", "output")
 
+# Flattened by hand rather than taken from pydantic: model_json_schema() uses
+# $ref/$defs, which grammar-constrained decoders do not resolve. Enum values come
+# from the semantic layer, so the model cannot emit a dataset or metric we do not
+# have -- the constraint is enforced during decoding, not repaired afterwards.
+def planner_schema() -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "dataset": {"type": "string", "enum": DATASETS},
+            "metric": {"type": "string", "enum": METRICS},
+            "group_by": {"type": "array", "items": {"type": "string", "enum": DIMENSIONS}},
+            "filters": {
+                "type": "object",
+                "properties": {
+                    "counterparty": {"type": "string"},
+                    "category": {"type": "string", "enum": CATEGORIES},
+                    "channel": {"type": "string"},
+                    "transaction_type": {"type": "string", "enum": ["credit", "debit"]},
+                    "bank_name": {"type": "string"},
+                    "bank_code": {"type": "string"},
+                    "reference_id": {"type": "string"},
+                    "description_contains": {"type": "string"},
+                    "min_amount": {"type": "number"},
+                    "max_amount": {"type": "number"},
+                },
+            },
+            "limit": {"type": "integer"},
+            "unsupported_reason": {"type": "string"},
+        },
+        "required": ["dataset", "metric", "group_by"],
+    }
+
 
 class CoercionError(ValueError):
     """The reply could not be mapped onto the schema with confidence.
@@ -352,8 +384,10 @@ class PlanResult:
 
 
 def _call(chat_fn: ChatFn | None, system: str, user: str, temperature: float | None) -> dict:
-    fn = chat_fn or chat_json
-    return fn("planner", system, user, temperature=temperature)
+    if chat_fn is not None:                 # tests inject a stand-in
+        return chat_fn("planner", system, user, temperature=temperature)
+    return chat_json("planner", system, user, temperature=temperature,
+                     schema=planner_schema())
 
 
 def plan_detailed(question: str, prior: QuerySpec | None = None, *,

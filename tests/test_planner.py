@@ -145,3 +145,27 @@ def test_uncategorised_is_not_offered_as_a_filterable_category():
     from app.planner import CATEGORIES
     assert "UNCATEGORISED" not in CATEGORIES
     assert "TAX" in CATEGORIES
+
+
+def test_truncated_json_is_salvaged_not_discarded():
+    """qwen3:4b emitted a valid object then padded with whitespace until it hit
+    the token limit, truncating before the closing brace. Throwing that away
+    costs a whole turn for output that was fine up to the cut."""
+    import app.llm as llm
+    truncated = ('{\n "dataset": "payouts",\n "metric": "sum_amount",\n'
+                 ' "group_by": [],\n "filters": {\n  "category": "TAX"\n }\n   \n  \n')
+    orig = llm.chat
+    llm.chat = lambda *a, **k: truncated
+    try:
+        got = llm.chat_json("planner", "sys", "user")
+    finally:
+        llm.chat = orig
+    assert got["dataset"] == "payouts" and got["filters"]["category"] == "TAX"
+
+
+def test_the_planner_schema_only_allows_real_values():
+    from app.planner import planner_schema, DATASETS, METRICS
+    s = planner_schema()
+    assert s["properties"]["dataset"]["enum"] == DATASETS
+    assert s["properties"]["metric"]["enum"] == METRICS
+    assert "UNCATEGORISED" not in s["properties"]["filters"]["properties"]["category"]["enum"]
