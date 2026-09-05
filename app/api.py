@@ -7,6 +7,8 @@ from pydantic import BaseModel
 from app.db import anchor_date, run
 from app.spec import QuerySpec
 from app.compiler import compile_sql, compile_evidence_sql, compile_null_group_sql
+import pandas as pd
+
 from app.dates import resolve, describe
 from app import validator, narrator
 
@@ -28,6 +30,15 @@ class Ask(BaseModel):
     session_id: str = "default"
 
 
+class Comparison(BaseModel):
+    window: str
+    value: float | None = None
+    previous: float | None = None
+    delta: float | None = None
+    delta_pct: float | None = None
+    rows: list[dict] = []          # per-group deltas when the query is grouped
+
+
 class Answer(BaseModel):
     answer: str
     confidence: str = "high"
@@ -35,6 +46,7 @@ class Answer(BaseModel):
     window: str | None = None
     breakdown: list[dict] = []
     evidence: list[dict] = []
+    comparison: Comparison | None = None
     warnings: list[str] = []
     refused: bool = False
 
@@ -66,9 +78,63 @@ def answer_spec(spec: QuerySpec, question: str = "") -> Answer:
                 f"{spec.group_by[0]} we could identify (tax, bank charges and "
                 f"cash have no payee) and is not in this breakdown.")
 
+    comparison = None
+    if spec.compare_to is not None:
+        comparison = _compare(spec, df, warnings)
+        text = narrator.with_comparison(text, comparison, spec)
+
     return Answer(answer=text, sql=sql, window=window,
                   breakdown=_clean(df), evidence=_clean(ev.head(25)),
-                  warnings=warnings)
+                  comparison=comparison, warnings=warnings)
+
+
+def _compare(spec: QuerySpec, df, warnings: list[str]) -> Comparison:
+    """Period-over-period. Runs the SAME spec against a second window and diffs
+    the results here -- the model is never asked to subtract two numbers."""
+    anchor = anchor_date()
+    prev_window = describe(*resolve(spec.compare_to, anchor))
+
+    def _pct(now, before):
+        if before in (None, 0) or now is None:
+            return None
+        return round(100.0 * (now - before) / abs(before), 1)
+
+    if not spec.group_by:
+        prev_sql, prev_params, _ = compile_sql(spec, anchor, date_range=spec.compare_to)
+        prev = run(prev_sql, prev_params)
+        now = float(df.iloc[0, -1]) if len(df) and pd.notna(df.iloc[0, -1]) else None
+        was = float(prev.iloc[0, -1]) if len(prev) and pd.notna(prev.iloc[0, -1]) else None
+        delta = None if (now is None or was is None) else round(now - was, 2)
+        return Comparison(window=prev_window, value=now, previous=was,
+                          delta=delta, delta_pct=_pct(now, was))
+
+    key, metric = spec.group_by[0], spec.metric
+
+    # Both sides must be compared UNLIMITED. Diffing two top-N lists reports a
+    # vendor as "disappeared" merely because it fell out of this month's top N.
+    # `df` is the limited display result, so the current window is re-queried
+    # wide here rather than reused.
+    wide = spec.model_copy(update={"limit": 10_000})
+    now_df = run(*compile_sql(wide, anchor)[:2])
+    prev_df = run(*compile_sql(wide, anchor, date_range=spec.compare_to)[:2])
+    merged = now_df.merge(prev_df, on=key, how="outer", suffixes=("", "_prev"))
+
+    # A group absent from one window means zero spend there, not unknown --
+    # but only for additive metrics. An average over no rows is genuinely
+    # unknown, and calling it 0 would be a fabricated number.
+    additive = spec.metric in ("sum_amount", "count")
+
+    rows = []
+    for _, r in merged.iterrows():
+        now = r.get(metric)
+        was = r.get(f"{metric}_prev")
+        now = (0.0 if additive else None) if pd.isna(now) else float(now)
+        was = (0.0 if additive else None) if pd.isna(was) else float(was)
+        rows.append({key: r[key], "value": now, "previous": was,
+                     "delta": None if (now is None or was is None) else round(now - was, 2),
+                     "delta_pct": _pct(now, was)})
+    rows.sort(key=lambda x: abs(x["delta"] or 0), reverse=True)
+    return Comparison(window=prev_window, rows=rows[:spec.limit])
 
 
 @app.get("/health")
@@ -95,6 +161,33 @@ def ask(req: Ask):
             out.warnings.append(
                 f'Read "{result.matched_date_text}" as {out.window}.')
     return out
+
+
+@app.post("/export")
+def export(spec: QuerySpec, fmt: str = "csv"):
+    """The breakdown as a file. 'Good to have' in the problem statement, and
+    one of the cheapest points on the board."""
+    from fastapi.responses import StreamingResponse
+    import io
+
+    v = validator.validate(spec)
+    if not v.ok:
+        return {"error": v.refusal or v.clarification}
+    sql, params, _ = compile_sql(v.repaired, anchor_date())
+    df = run(sql, params)
+
+    buf = io.BytesIO()
+    if fmt == "xlsx":
+        with pd.ExcelWriter(buf, engine="openpyxl") as w:
+            df.to_excel(w, index=False, sheet_name="breakdown")
+        media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        buf.write(df.to_csv(index=False).encode())
+        media = "text/csv"
+    buf.seek(0)
+    name = f"{spec.dataset}_{spec.metric}.{ 'xlsx' if fmt == 'xlsx' else 'csv' }"
+    return StreamingResponse(buf, media_type=media,
+                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @app.get("/efficiency")

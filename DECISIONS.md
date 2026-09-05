@@ -86,7 +86,29 @@ What the sample already tells us:
 would want per-row nonces plus a separate deterministic (SIV) column for joins.
 Knowing the trade-off is worth more than silently copying it.
 
-## 6. Negative account balances
+## 6. Query engine: DuckDB. Snowflake not used. — DECIDED
+
+Their analytics run on Snowflake, and we considered matching it. Decided
+against for this build:
+
+- The visible demo difference is nil. The chat, the answer and the breakdown
+  are identical; only the latency is worse (~30ms local vs a few hundred ms
+  over the network).
+- It puts the demo on the venue wifi. A dropped network means no demo at all.
+- A suspended warehouse takes seconds to auto-resume, which lands as a silent
+  pause at the worst possible moment.
+
+**What we say if asked:** the compiler emits portable SQL against a single view,
+so the engine is an adapter, not a rewrite. `date_trunc`, `ILIKE`, `right()` and
+`?` binding all work on both. The one real porting task is Snowflake
+upper-casing unquoted identifiers, which changes result-dict keys and would
+break the UI and the numeric guard. Loading differs too: no `read_csv_auto`, so
+`PUT` + `COPY INTO` or `write_pandas`.
+
+Knowing exactly what porting would cost is a better answer than having half-built
+it.
+
+## 7. Negative account balances
 
 `available_balance` runs to −131,629,423.33 on several accounts. Overdraft?
 Sign convention? Bad export? **Ask the organisers.**
