@@ -61,6 +61,74 @@ DIM_ALIASES = {
     "type": "transaction_type", "bank": "bank_name", "account": "account_id",
     "entity": "entity_id", "program": "program_id", "cat": "category",
 }
+def _keyword_fallback(question: str) -> dict:
+    """Last-resort deterministic parser when the LLM fails to return JSON.
+    Covers the most common question patterns so we don't refuse unnecessarily."""
+    q = question.lower()
+    spec: dict = {"dataset": "payouts", "metric": "sum_amount", "group_by": [], "filters": {}}
+
+    # Dataset
+    if any(w in q for w in ("receiv", "credit", "income", "inflow")):
+        spec["dataset"] = "receipts"
+    elif any(w in q for w in ("all transaction", "every transaction")):
+        spec["dataset"] = "transactions"
+
+    # Metric
+    if any(w in q for w in ("how many", "count", "number of")):
+        spec["metric"] = "count"
+    elif any(w in q for w in ("average", "avg", "mean")):
+        spec["metric"] = "avg_amount"
+    elif any(w in q for w in ("largest", "biggest", "highest", "max")):
+        spec["metric"] = "max_amount"
+    elif any(w in q for w in ("smallest", "lowest", "min")):
+        spec["metric"] = "min_amount"
+
+    # Group by
+    if any(w in q for w in ("by category", "per category", "category wise", "categorywise",
+                             "most spent category", "top category", "highest category")):
+        spec["group_by"] = ["category"]
+    elif any(w in q for w in ("by vendor", "by counterparty", "per vendor", "top vendor",
+                               "which vendor", "top 5 vendor", "top 10 vendor")):
+        spec["group_by"] = ["counterparty"]
+    elif any(w in q for w in ("by bank", "per bank", "bank wise", "which bank")):
+        spec["group_by"] = ["bank_name"]
+    elif any(w in q for w in ("by channel", "per channel", "channel wise")):
+        spec["group_by"] = ["channel"]
+    elif any(w in q for w in ("by month", "monthly", "month wise")):
+        spec["group_by"] = ["month"]
+
+    # Filters
+    for cat in CATEGORIES:
+        if cat.lower().replace("_", " ") in q or cat.lower() in q:
+            spec["filters"]["category"] = cat
+            break
+    if "upi" in q: spec["filters"]["channel"] = "UPI"
+    elif "neft" in q: spec["filters"]["channel"] = "NEFT"
+    elif "imps" in q: spec["filters"]["channel"] = "IMPS"
+    elif "rtgs" in q: spec["filters"]["channel"] = "RTGS"
+
+    # Limit
+    import re
+    m = re.search(r"top\s+(\d+)", q)
+    if m:
+        spec["limit"] = int(m.group(1))
+
+    # "how much did I spend" / "total spending" / "what did I receive" are valid
+    # even with no group_by or filters — they ask for a single aggregate.
+    has_intent = (spec["filters"] != {} or spec["group_by"] != []
+                  or spec["metric"] != "sum_amount"
+                  or any(w in q for w in ("spend", "spent", "pay", "paid", "total",
+                                          "receiv", "credit", "income", "debit",
+                                          "transaction", "how much", "what did",
+                                          "how many", "show", "list", "give me",
+                                          "emi", "rent", "salary", "insurance")))
+    if not has_intent:
+        return {"unsupported_reason": "I couldn't understand that question. "
+                "Try asking something like 'how much did I spend this month?' or "
+                "'show spending by category'."}
+
+    return spec
+
 WRAPPER_KEYS = ("query", "spec", "queryspec", "query_spec", "result", "output")
 
 # Flattened by hand rather than taken from pydantic: model_json_schema() uses
