@@ -276,3 +276,42 @@ def test_markdown_fenced_json_is_parsed():
     finally:
         llm.chat = orig
     assert got == {"dataset": "payouts", "metric": "count"}
+
+
+def test_an_invented_category_is_dropped_not_refused():
+    """The model attached category=TRANSFER to "what is my spend this quarter?",
+    which mentions no category. Refusing threw away an answerable question; the
+    right move is to drop the filter the user never asked for."""
+    from app.planner import category_verdict
+    assert category_verdict("What is my spend this quarter?", "TRANSFER") == "drop"
+    assert category_verdict("How much did I spend last month?", "CASH") == "drop"
+
+
+def test_a_category_the_user_asked_for_but_we_lack_is_refused():
+    from app.planner import category_verdict
+    assert category_verdict("How much did I spend on groceries?", "CASH") == "refuse"
+    assert category_verdict("what did I spend on travel?", "UTILITIES") == "refuse"
+
+
+def test_a_correctly_named_category_passes():
+    from app.planner import category_verdict
+    assert category_verdict("How much cash did I withdraw?", "CASH") == "ok"
+    assert category_verdict("total tax paid last quarter", "TAX") == "ok"
+
+
+def test_transactions_plus_a_direction_canonicalises_to_the_dataset():
+    """transactions + transaction_type=debit IS payouts -- one query, two
+    spellings. Canonical form keeps downstream logic seeing one."""
+    d = coerce({"dataset": "transactions", "filters": {"transaction_type": "debit"}})
+    assert d["dataset"] == "payouts" and "transaction_type" not in d["filters"]
+    d = coerce({"dataset": "transactions", "filters": {"transaction_type": "credit"}})
+    assert d["dataset"] == "receipts"
+
+
+def test_no_op_amount_bounds_are_dropped():
+    """A richer prompt makes small models fill every field; min 0 / max 1e15 are
+    no-ops that only add noise to the SQL."""
+    d = coerce({"dataset": "payouts", "filters": {"min_amount": 0, "max_amount": 1e15}})
+    assert d["filters"] == {}
+    d = coerce({"dataset": "payouts", "filters": {"min_amount": 5000}})
+    assert d["filters"]["min_amount"] == 5000

@@ -15,4 +15,4 @@
 | refusal | 8 | 8 | 100% |
 | vendor | 2 | 2 | 100% |
 
-planner latency: p50 1365ms, max 2459ms
+planner latency: p50 1410ms, max 5500ms

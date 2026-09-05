@@ -253,10 +253,32 @@ CATEGORY_CUES = {
 CATEGORY_CUE_RE = {k: re.compile(v, re.I) for k, v in CATEGORY_CUES.items()}
 
 
+# "how much did I spend ON groceries" is a category REQUEST. "what is my spend
+# this quarter" is not -- so a category filter appearing there was invented.
+CATEGORY_REQUEST_RE = re.compile(
+    r"\b(on|for|towards|in)\s+[a-z]", re.I)
+
+
 def category_is_supported(question: str, category: str | None) -> bool:
     if not category or category not in CATEGORY_CUE_RE:
         return True
     return bool(CATEGORY_CUE_RE[category].search(question))
+
+
+def category_verdict(question: str, category: str | None) -> str:
+    """One of: ok | drop | refuse.
+
+    Distinguishing these matters. If the user ASKED for a category we do not
+    derive, refusing is right. If the model attached a category the user never
+    mentioned, refusing throws away a perfectly answerable question -- drop the
+    invented filter and answer what was actually asked.
+    """
+    if category_is_supported(question, category):
+        return "ok"
+    # did they name some OTHER category we do know?
+    if any(rx.search(question) for k, rx in CATEGORY_CUE_RE.items() if k != category):
+        return "drop"
+    return "refuse" if CATEGORY_REQUEST_RE.search(question) else "drop"
 
 
 def out_of_scope(question: str) -> str | None:
@@ -317,8 +339,11 @@ class CoercionError(ValueError):
 
 
 def _prompt() -> str:
+    from app.schema_context import schema_context
     return f"""You are a JSON converter. Convert a finance question into a QuerySpec JSON object.
 Reply with ONLY a JSON object. No text before or after.
+
+{schema_context()}
 
 RULES:
 - NEVER compute numbers or invent data.
@@ -594,6 +619,10 @@ def coerce(raw: dict, *, patch: bool = False) -> dict:
                 v = float(str(v).replace(",", "").replace("₹", ""))
             except ValueError:
                 continue
+            # A richer prompt makes small models fill every field: min_amount 0
+            # and max_amount 1e15 are no-ops that only add noise to the SQL.
+            if (k == "min_amount" and v <= 0) or (k == "max_amount" and v >= 1e12):
+                continue
         elif k == "program_id":
             try:
                 v = int(v)
@@ -602,6 +631,15 @@ def coerce(raw: dict, *, patch: bool = False) -> dict:
         if k in known_filter_keys:
             clean[k] = v
     if clean or not patch:
+        d["filters"] = clean
+
+    # transactions + transaction_type=debit IS payouts. Same query, and the
+    # canonical form keeps downstream logic (and the eval) from seeing two
+    # spellings of one thing.
+    ttype = clean.get("transaction_type")
+    if d.get("dataset") == "transactions" and ttype in ("debit", "credit"):
+        d["dataset"] = "payouts" if ttype == "debit" else "receipts"
+        clean.pop("transaction_type", None)
         d["filters"] = clean
 
     if "limit" in present or not patch:
@@ -700,13 +738,18 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
     # before?" says nothing about tax, but tax is still the right filter.
     inherited = (used_patch and prior is not None
                  and spec.filters.category == prior.filters.category)
-    if (spec.filters.category and not inherited
-            and not category_is_supported(question, spec.filters.category)):
-        return PlanResult(
-            QuerySpec(dataset=spec.dataset, unsupported_reason=(
-                "I do not derive that category from your transactions. I can "
-                f"break spending down by: {', '.join(c.lower().replace('_', ' ') for c in CATEGORIES)}.")),
-            confidence="high", attempts=attempts)
+    if spec.filters.category and not inherited:
+        verdict = category_verdict(question, spec.filters.category)
+        if verdict == "refuse":
+            return PlanResult(
+                QuerySpec(dataset=spec.dataset, unsupported_reason=(
+                    "I do not derive that category from your transactions. I can "
+                    f"break spending down by: "
+                    f"{', '.join(c.lower().replace('_', ' ') for c in CATEGORIES)}.")),
+                confidence="high", attempts=attempts)
+        if verdict == "drop":
+            spec = spec.model_copy(deep=True)
+            spec.filters.category = None
 
     if spec.filters.category == "NOT_IN_DATA":
         return PlanResult(
