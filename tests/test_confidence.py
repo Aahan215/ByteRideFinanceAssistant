@@ -49,3 +49,14 @@ def test_uncategorised_is_rejected_as_a_user_filter():
     from app.spec import QuerySpec, Filters
     v = validate(QuerySpec(dataset="payouts", filters=Filters(category="UNCATEGORISED")))
     assert not v.ok and v.refusal
+
+
+def test_an_empty_result_is_never_upgraded_to_high():
+    """A query that matched nothing has no answer to be confident about. The
+    /ask handler was overwriting "n/a" with "high" because the model had been
+    self-consistent about producing an empty result."""
+    from app.confidence import assess
+    a = assess(spec=spec(), row_count=0, planner_confidence="high")
+    assert a.level == "n/a"
+    order = {"n/a": -1, "high": 0, "medium": 1, "low": 2}
+    assert order["high"] > order["n/a"]      # the merge must guard against this

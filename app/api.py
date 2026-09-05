@@ -24,6 +24,25 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 SESSIONS: dict[str, QuerySpec] = {}
 
 
+def _suggest(question: str, spec: QuerySpec, candidates: list[str]) -> list[str]:
+    """Turn candidates into questions the user can ask as-is.
+
+    Substituting the ambiguous term back into their own wording beats a bare
+    list of names: they click once instead of retyping the whole question.
+    """
+    if not candidates:
+        return []
+    term = spec.filters.counterparty
+    out = []
+    for c in candidates[:5]:
+        if term and question and term.lower() in question.lower():
+            i = question.lower().index(term.lower())
+            out.append(question[:i] + c + question[i + len(term):])
+        else:
+            out.append(f"{question} — {c}" if question else c)
+    return out
+
+
 def _clean(df) -> list[dict]:
     """pandas turns SQL NULL into NaN, which serialises as the string 'nan' and
     reaches the user as a fake value. Put real nulls back."""
@@ -60,6 +79,9 @@ class Answer(BaseModel):
     confidence_reasons: list[str] = []  # why the badge says what it says
     warnings: list[str] = []
     refused: bool = False
+    # A question back to the user, with concrete options they can click.
+    clarification: str | None = None
+    suggestions: list[str] = []
     spec: dict | None = None       # what we actually ran -- powers export + "show your working"
 
 
@@ -68,7 +90,9 @@ def answer_spec(spec: QuerySpec, question: str = "", scope=None) -> Answer:
     which is why the backend team is not blocked on the model team."""
     v = validator.validate(spec)
     if not v.ok:
-        return Answer(answer=v.refusal or v.clarification, refused=True, confidence="n/a")
+        return Answer(answer=v.refusal or v.clarification, refused=True, confidence="n/a",
+                      clarification=v.clarification,
+                      suggestions=_suggest(question, spec, v.candidates))
 
     spec = v.repaired
     sql, params, meta = compile_sql(spec, anchor_date(), scope=scope)
@@ -264,7 +288,10 @@ def ask(req: Ask):
         a = confidence.assess(spec=result.spec, warnings=out.warnings,
                               planner_confidence=result.confidence)
         order = {"n/a": -1, "high": 0, "medium": 1, "low": 2}
-        if order[a.level] > order[out.confidence]:
+        # "n/a" means the query matched nothing -- there is no answer to be
+        # confident about. It must never be upgraded to "high" just because the
+        # model was self-consistent about producing an empty result.
+        if out.confidence != "n/a" and order[a.level] > order[out.confidence]:
             out.confidence = a.level
         out.confidence_reasons = list(dict.fromkeys(out.confidence_reasons + a.reasons))
         if result.matched_date_text:

@@ -676,7 +676,11 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
                   chat_fn: ChatFn | None = None,
                   temperature: float | None = None) -> PlanResult:
     # Refuse before spending a model call on something the schema cannot answer.
-    if (reason := out_of_scope(question)) and prior is None:
+    # NOT gated on `prior is None`. It was, and that meant any out-of-scope
+    # question asked mid-conversation skipped the check entirely -- "which
+    # transactions are unreconciled?" as a follow-up answered "Count: 0".
+    # A follow-up about reconciliation is still about reconciliation.
+    if reason := out_of_scope(question):
         return PlanResult(QuerySpec(dataset="transactions", unsupported_reason=reason),
                           confidence="high", attempts=[])
 

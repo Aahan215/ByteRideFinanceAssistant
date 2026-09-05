@@ -315,3 +315,13 @@ def test_no_op_amount_bounds_are_dropped():
     assert d["filters"] == {}
     d = coerce({"dataset": "payouts", "filters": {"min_amount": 5000}})
     assert d["filters"]["min_amount"] == 5000
+
+
+def test_out_of_scope_is_checked_on_follow_ups_too():
+    """It used to be gated on `prior is None`, so asking "which transactions
+    are unreconciled?" mid-conversation skipped the check and answered
+    "Count: 0" with high confidence."""
+    prior = QuerySpec(dataset="payouts", metric="sum_amount")
+    r = plan_detailed("Which transactions are unreconciled?", prior,
+                      chat_fn=lambda *a, **k: {"dataset": "transactions", "metric": "count"})
+    assert r.spec.unsupported_reason and "reconciliation" in r.spec.unsupported_reason

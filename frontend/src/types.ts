@@ -37,6 +37,10 @@ export interface Answer {
   confidence_reasons: string[]
   warnings: string[]
   refused: boolean
+  /** A question back to the user. Rendered with `suggestions` as click targets. */
+  clarification?: string | null
+  /** Ready-to-ask questions, one per option -- the user clicks instead of retyping. */
+  suggestions?: string[]
   /** The QuerySpec that actually ran. Powers export and "show your working". */
   spec: Record<string, unknown> | null
 }

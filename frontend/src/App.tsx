@@ -76,7 +76,7 @@ export default function App() {
                You can open the query and the source records behind any number.</p>
           </div>
         )}
-        {messages.map(m => <MessageCard key={m.id} message={m} />)}
+        {messages.map(m => <MessageCard key={m.id} message={m} onAsk={send} />)}
       </div>
 
       <Composer onSend={send} busy={busy} />

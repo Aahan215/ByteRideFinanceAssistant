@@ -200,3 +200,15 @@
   font-weight: 600;
 }
 .composer-ask:disabled { opacity: .5; cursor: default; }
+
+/* Clarification: the assistant asking back. Styled as an invitation, not an
+   error -- declining to guess is correct behaviour here. */
+.clarify { margin-top: 12px; }
+.clarify-options { display: flex; flex-wrap: wrap; gap: 7px; }
+.clarify-option {
+  font-size: 13px; padding: 6px 12px; border-radius: 999px;
+  border: 1px solid var(--accent); background: var(--accent-soft);
+  color: var(--accent); cursor: pointer;
+}
+.clarify-option:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.clarify-option:disabled { opacity: .6; cursor: default; }
