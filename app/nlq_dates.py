@@ -9,6 +9,7 @@ Everything here is testable without a model, and every rule is one regex.
 """
 from __future__ import annotations
 import re
+from datetime import date
 from app.spec import DateRange
 
 MONTHS = {m: i for i, m in enumerate(
@@ -29,7 +30,7 @@ def _n(tok: str) -> int:
 
 
 # Ordered most-specific first. Each returns (DateRange, matched_text).
-def extract(question: str) -> tuple[DateRange | None, str | None]:
+def extract(question: str, anchor: date | None = None) -> tuple[DateRange | None, str | None]:
     q = question.lower()
 
     # between 2026-01-01 and 2026-03-31  /  from ... to ...
@@ -67,19 +68,27 @@ def extract(question: str) -> tuple[DateRange | None, str | None]:
     if re.search(r"\b(ytd|year to date|this year so far)\b", q):
         return DateRange(kind="relative", unit="year", offset=0, periods=1), "ytd"
 
-    # "in May 2026" / "in May" -> absolute month. Without a year the caller
-    # resolves against the anchor, so we leave the year out deliberately.
+    # "in May 2026" / "in May" -> absolute month.
     m = re.search(r"\b(?:in|during|for)\s+(" + "|".join(MONTHS) + r")\b(?:\s+(\d{4}))?", q)
     if m:
         mon = MONTHS[m.group(1)]
         if m.group(2):
             y = int(m.group(2))
-            end = f"{y+1}-01-01" if mon == 12 else f"{y}-{mon+1:02d}-01"
-            # end is exclusive at the compiler, so pass the last day of the month
-            import datetime
-            last = datetime.date.fromisoformat(end) - datetime.timedelta(days=1)
-            return DateRange(kind="absolute", start=f"{y}-{mon:02d}-01",
-                             end=last.isoformat()), m.group(0)
-        return None, None   # bare month name needs the anchor year -- let the model decide
+        else:
+            # No year given: resolve against the DATA anchor, never the model --
+            # dates are always deterministic (see module docstring / DECISIONS.md).
+            # "in May" means the most recent May at or before "today": the same
+            # year if that month has already happened this year, else last year.
+            # A bare month can never point at a month the data cannot contain.
+            if anchor is None:
+                from app.db import anchor_date
+                anchor = anchor_date()
+            y = anchor.year if mon <= anchor.month else anchor.year - 1
+        end = f"{y+1}-01-01" if mon == 12 else f"{y}-{mon+1:02d}-01"
+        # end is exclusive at the compiler, so pass the last day of the month
+        import datetime
+        last = datetime.date.fromisoformat(end) - datetime.timedelta(days=1)
+        return DateRange(kind="absolute", start=f"{y}-{mon:02d}-01",
+                         end=last.isoformat()), m.group(0)
 
     return None, None

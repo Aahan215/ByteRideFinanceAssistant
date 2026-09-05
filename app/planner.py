@@ -787,6 +787,15 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
                   chat_fn: ChatFn | None = None,
                   temperature: float | None = None,
                   role: str = "planner") -> PlanResult:
+    # Indian numeral shorthand ("1 lakh", "2 cr", "5L") is ordinary English to
+    # the user but nothing the coverage allowlist or the model prompt knows a
+    # word for -- "1 lakh" was refused as an unknown concept ('lakh') before
+    # the model ever got a turn. Normalise it into plain digits FIRST, so
+    # every check below (out-of-scope, coverage, the model, provenance) sees
+    # "100000" the same way it would if the user had typed that themselves.
+    from app.nlq_numbers import normalise as normalise_numbers
+    question = normalise_numbers(question)
+
     # Refuse before spending a model call on something the schema cannot answer.
     # NOT gated on `prior is None`. It was, and that meant any out-of-scope
     # question asked mid-conversation skipped the check entirely -- "which

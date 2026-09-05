@@ -52,6 +52,16 @@ def classify(case: dict) -> tuple[str, str, str]:
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", help="planner model override, e.g. qwen3:1.7b")
+    a = ap.parse_args()
+    if a.model:
+        from app.llm import set_model
+        set_model("planner", a.model)
+    from app.llm import MODELS
+    print(f"planner: {MODELS['planner']}   escalate: {MODELS['escalate']}\n")
+
     cases = yaml.safe_load(SUITE.read_text())
     by_cat = collections.defaultdict(list)
     fails, warns = [], []
@@ -70,6 +80,15 @@ def main():
         print(f"| {cat} | {vs.count('PASS')} | {vs.count('WARN')} | {vs.count('FAIL')} |")
     print(f"\nfabrications / crashes: {len(fails)}    false refusals: {len(warns)}    "
           f"total: {len(cases)}")
+    # With a small planner and a larger escalation tier, an escalated answer is
+    # not the small model's answer. Make that visible or the comparison lies.
+    try:
+        from app.llm import efficiency_report
+        r = efficiency_report()
+        print(f"model calls: {r['calls']}   escalations: {r['escalations']} "
+              f"({r['escalation_rate']:.0%})   by model: {r['by_model']}")
+    except Exception:
+        pass
     sys.exit(1 if fails else 0)
 
 

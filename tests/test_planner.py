@@ -84,6 +84,25 @@ def test_tax_question_becomes_a_category_filter():
     assert (r.spec.date_range.unit, r.spec.date_range.periods) == ("month", 3)
 
 
+def test_indian_numeral_and_month_both_land_in_one_spec():
+    """"1 lakh" must be normalised to a literal number before coverage and the
+    model ever see the question -- otherwise the allowlist refuses on the
+    unknown word 'lakh' before a query is even attempted (see
+    app/nlq_numbers.py). And once the numeral is out of the way, the
+    deterministic month extractor must still catch "in May": a question with
+    BOTH an amount filter and a month needs both to land in the final spec,
+    not just whichever one the model happened to also emit."""
+    r = plan_detailed(
+        "How many payments over 1 lakh did I make in May?",
+        chat_fn=fake({"dataset": "transactions", "metric": "count",
+                      "filters": {"min_amount": 100000}}))
+    assert not r.spec.unsupported_reason
+    assert r.spec.filters.min_amount == 100000
+    assert r.spec.date_range.kind == "absolute"
+    assert r.spec.date_range.start.endswith("-05-01")
+    assert r.spec.date_range.end.endswith("-05-31")
+
+
 def test_repair_loop_recovers_from_an_invalid_first_reply():
     r = plan_detailed("where did I spend the most",
                       chat_fn=sequence({"dataset": 12345, "metric": ["not", "a", "metric"]},
