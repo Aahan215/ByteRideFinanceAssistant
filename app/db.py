@@ -16,8 +16,10 @@ def connect(read_only: bool = True) -> duckdb.DuckDBPyConnection:
 @functools.lru_cache(maxsize=1)
 def anchor_date() -> datetime.date:
     """'Today' for the assistant = the latest date present in the data."""
-    table, col = SEMANTIC["anchor"]["source"].split(".")
-    return connect().execute(f"SELECT MAX({col}) FROM {table}").fetchone()[0]
+    _, col = SEMANTIC["anchor"]["source"].split(".")
+    view = SEMANTIC["base_view"]
+    val = connect().execute(f"SELECT MAX({col}) FROM {view}").fetchone()[0]
+    return val.date() if hasattr(val, "date") else val
 
 
 def run(sql: str, params: list | None = None):

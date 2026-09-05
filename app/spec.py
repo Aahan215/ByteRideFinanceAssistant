@@ -1,35 +1,43 @@
 """QuerySpec: the contract between the LLM planner and the deterministic engine.
 
-This is the single most important file in the repo. The planner's ONLY job is to
-emit a valid QuerySpec. The compiler's ONLY job is to turn one into SQL.
-Neither side needs to know how the other works -- that is what lets the team
-work in parallel.
+Written against the real schema: bank -> account -> transaction, with the
+counterparty parsed out of the narration at load time (app/enrich.py).
 """
 from __future__ import annotations
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 Metric = Literal["sum_amount", "count", "avg_amount", "max_amount", "min_amount"]
-Dataset = Literal["transactions", "vendor_payouts"]
-Dimension = Literal["vendor", "category", "account_code", "status", "month", "quarter"]
+# "payouts" = debits, "receipts" = credits. There is no vendor_payouts table.
+Dataset = Literal["transactions", "payouts", "receipts"]
+Dimension = Literal[
+    "counterparty", "channel", "transaction_type", "bank_name", "bank_code",
+    "account_id", "entity_id", "program_id", "reconciliation", "month", "quarter",
+]
 
 
 class DateRange(BaseModel):
     kind: Literal["relative", "absolute", "all_time"] = "all_time"
-    # relative: unit + offset, resolved against the data anchor date.
-    # offset 0 = current period, -1 = previous period.
+    # relative: resolved against the DATA's latest date, not the wall clock.
     unit: Optional[Literal["day", "week", "month", "quarter", "year"]] = None
-    offset: int = 0
-    periods: int = 1               # how many periods back to span
+    offset: int = 0                # 0 = current period, -1 = previous
+    periods: int = 1               # how many periods the window spans
     start: Optional[str] = None    # absolute, ISO yyyy-mm-dd
     end: Optional[str] = None
 
 
 class Filters(BaseModel):
-    vendor: Optional[str] = None
-    category: Optional[str] = None
-    account_code: Optional[str] = None
-    status: Optional[str] = None
+    counterparty: Optional[str] = None      # parsed vendor/merchant name
+    channel: Optional[str] = None           # UPI / IMPS / NEFT / FT / CHEQUE / CHARGES
+    transaction_type: Optional[Literal["credit", "debit"]] = None
+    bank_name: Optional[str] = None
+    bank_code: Optional[str] = None
+    account_id: Optional[str] = None
+    entity_id: Optional[str] = None
+    program_id: Optional[int] = None
+    reconciliation: Optional[Literal["reconciled", "unreconciled"]] = None
+    reference_id: Optional[str] = None      # -> transaction_reference_id (DECISIONS.md #2)
+    description_contains: Optional[str] = None
     min_amount: Optional[float] = None
     max_amount: Optional[float] = None
 
@@ -40,15 +48,17 @@ class QuerySpec(BaseModel):
     filters: Filters = Field(default_factory=Filters)
     date_range: DateRange = Field(default_factory=DateRange)
     group_by: list[Dimension] = Field(default_factory=list)
+    # Period-over-period. When set, the API runs the spec twice and diffs.
+    compare_to: Optional[DateRange] = None
     order_desc: bool = True
     limit: int = 50
-    # Set by the planner when it cannot map the question to this schema.
-    # The API must refuse rather than guess when this is populated.
+    # Set by the planner when the question cannot be answered from this schema.
+    # The API refuses rather than guessing. See DECISIONS.md #5.
     unsupported_reason: Optional[str] = None
 
     def merge_patch(self, patch: dict) -> "QuerySpec":
-        """Multi-turn: 'how does that compare to last month?' produces a PATCH,
-        not a whole new spec. Deterministic merge, no LLM involved."""
+        """Multi-turn: 'how does that compare to the month before?' produces a
+        PATCH, not a whole new spec. Deterministic merge, no LLM involved."""
         base = self.model_dump()
         for k, v in patch.items():
             if isinstance(v, dict) and isinstance(base.get(k), dict):

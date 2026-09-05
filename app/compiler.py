@@ -1,60 +1,109 @@
-"""QuerySpec -> parameterised SQL. Fully deterministic, fully testable.
+"""QuerySpec -> parameterised SQL against the enriched view.
 
-Nothing the model produces is ever interpolated into SQL as a string: metrics
-and dimensions are looked up in the semantic layer allow-list, and all literal
-values go through bound parameters.
+Nothing from the model is interpolated into SQL as a string: metrics and
+dimensions are looked up in the semantic-layer allow-list, and every literal
+goes through a bound parameter.
 """
 from __future__ import annotations
 from app.db import SEMANTIC
 from app.dates import resolve
 from app.spec import QuerySpec
 
+# Columns the data dictionary marks sensitive. Never selected raw.
+SENSITIVE = SEMANTIC["sensitive_columns"]
+REF_DEFAULT = SEMANTIC["reference_columns"]["default"]
 
-def compile_sql(spec: QuerySpec, anchor) -> tuple[str, list, dict]:
-    ds = SEMANTIC["datasets"][spec.dataset]
-    table, date_col, amt_col = ds["table"], ds["date_column"], ds["amount_column"]
 
-    metric_sql = SEMANTIC["metrics"][spec.metric]["sql"].format(amount=amt_col)
+def _dim_expr(dim: str, date_col: str) -> str:
+    d = SEMANTIC["dimensions"][dim]
+    return d["expr"].format(date=date_col) if "expr" in d else d["column"]
 
-    selects, groups = [], []
-    for dim in spec.group_by:
-        d = SEMANTIC["dimensions"][dim]
-        expr = d["expr"].format(date=date_col) if "expr" in d else d["column"]
-        selects.append(f"{expr} AS {dim}")
-        groups.append(expr)
 
+def _where(spec: QuerySpec, date_col: str, amount_col: str) -> tuple[list[str], list]:
     where, params = [], []
     for field, value in spec.filters.model_dump().items():
         if value is None:
             continue
         if field == "min_amount":
-            where.append(f"{amt_col} >= ?"); params.append(value)
+            where.append(f"{amount_col} >= ?"); params.append(value)
         elif field == "max_amount":
-            where.append(f"{amt_col} <= ?"); params.append(value)
+            where.append(f"{amount_col} <= ?"); params.append(value)
+        elif field == "reference_id":
+            # DECISIONS.md #2 -- a bare "ref no" hits the plaintext column.
+            where.append(f"{REF_DEFAULT} = ?"); params.append(value)
+        elif field == "description_contains":
+            where.append("description ILIKE ?"); params.append(f"%{value}%")
+        elif field == "counterparty":
+            # match the normalised group key, not the raw narration
+            where.append("counterparty = ?"); params.append(str(value).upper())
         else:
-            col = SEMANTIC["dimensions"][field]["column"]
-            where.append(f"{col} = ?"); params.append(value)
+            where.append(f"{SEMANTIC['dimensions'][field]['column']} = ?")
+            params.append(value)
+    return where, params
 
-    start, end = resolve(spec.date_range, anchor)
+
+def compile_sql(spec: QuerySpec, anchor, date_range=None) -> tuple[str, list, dict]:
+    ds = SEMANTIC["datasets"][spec.dataset]
+    view, date_col, amt_col = ds["view"], ds["date_column"], ds["amount_column"]
+
+    metric_sql = SEMANTIC["metrics"][spec.metric]["sql"].format(amount=amt_col)
+
+    selects, groups = [], []
+    for dim in spec.group_by:
+        expr = _dim_expr(dim, date_col)
+        selects.append(f"{expr} AS {dim}")
+        groups.append(expr)
+
+    where, params = _where(spec, date_col, amt_col)
+    if ds.get("fixed_filter"):          # payouts = debits, receipts = credits
+        where.insert(0, ds["fixed_filter"])
+
+    start, end = resolve(date_range or spec.date_range, anchor)
     if start:
         where.append(f"{date_col} >= ?"); params.append(start)
     if end:
         where.append(f"{date_col} < ?"); params.append(end)
 
-    sql = f"SELECT {', '.join(selects + [f'{metric_sql} AS {spec.metric}'])} FROM {table}"
+    sql = f"SELECT {', '.join(selects + [f'{metric_sql} AS {spec.metric}'])} FROM {view}"
     if where:
         sql += " WHERE " + " AND ".join(where)
     if groups:
         sql += " GROUP BY " + ", ".join(groups)
     sql += f" ORDER BY {spec.metric} {'DESC' if spec.order_desc else 'ASC'}"
     sql += f" LIMIT {int(spec.limit)}"
+    return sql, params, {"window": (start, end), "view": view}
 
-    return sql, params, {"window": (start, end), "table": table}
+
+def evidence_columns() -> str:
+    """The drill-down projection. Sensitive columns are masked in SQL so raw
+    values never reach the API layer, let alone the model or the screen."""
+    cols = ["transaction_id", "transaction_date", "transaction_type", "description",
+            "transaction_amount", "counterparty", "channel", "bank_name",
+            "reconciliation_state", "transaction_reference_id"]
+    masked = []
+    for col, rule in SENSITIVE.items():
+        if rule["mask"] == "last4":
+            masked.append(f"concat('XXXXXX', right({col}, 4)) AS {col}")
+        else:
+            masked.append(f"CASE WHEN {col} IS NULL THEN NULL ELSE '[redacted]' END AS {col}")
+    return ", ".join(cols + masked)
 
 
 def compile_evidence_sql(spec: QuerySpec, anchor, limit: int = 200):
-    """The drill-down query: the actual rows behind the number.
-    Required by 'verifiable answers' -- every answer ships its receipts."""
-    agg, params, meta = compile_sql(spec, anchor)
-    body = agg.split(" FROM ", 1)[1].split(" GROUP BY")[0].split(" ORDER BY")[0]
-    return f"SELECT * FROM {body} LIMIT {int(limit)}", params
+    """The rows behind the number. Required by 'verifiable answers'."""
+    ds = SEMANTIC["datasets"][spec.dataset]
+    view, date_col, amt_col = ds["view"], ds["date_column"], ds["amount_column"]
+    where, params = _where(spec, date_col, amt_col)
+    if ds.get("fixed_filter"):
+        where.insert(0, ds["fixed_filter"])
+    start, end = resolve(spec.date_range, anchor)
+    if start:
+        where.append(f"{date_col} >= ?"); params.append(start)
+    if end:
+        where.append(f"{date_col} < ?"); params.append(end)
+
+    sql = f"SELECT {evidence_columns()} FROM {view}"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += f" ORDER BY {date_col} DESC LIMIT {int(limit)}"
+    return sql, params

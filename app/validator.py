@@ -21,11 +21,12 @@ class Verdict:
 
 
 def _known_values(dim: str) -> list[str]:
-    d = SEMANTIC["dimensions"][dim]
-    if "lookup" in d:
-        lk = d["lookup"]
-        return [r[0] for r in run(f"SELECT DISTINCT {lk['name']} FROM {lk['table']}").values]
-    return [r[0] for r in run(f"SELECT DISTINCT {d['column']} FROM transactions").values]
+    """Distinct values straight from the enriched view -- so a filter is only
+    accepted if the data actually contains it."""
+    col = SEMANTIC["dimensions"][dim]["column"]
+    view = SEMANTIC["base_view"]
+    rows = run(f"SELECT DISTINCT {col} FROM {view} WHERE {col} IS NOT NULL")
+    return [r[0] for r in rows.values]
 
 
 def validate(spec: QuerySpec) -> Verdict:
@@ -34,7 +35,7 @@ def validate(spec: QuerySpec) -> Verdict:
 
     warnings, repaired = [], spec.model_copy(deep=True)
 
-    for dim in ("vendor", "category", "status", "account_code"):
+    for dim in ("counterparty", "channel", "bank_name", "transaction_type", "reconciliation"):
         value = getattr(spec.filters, dim)
         if value is None:
             continue

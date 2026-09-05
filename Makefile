@@ -37,3 +37,6 @@ model-check:
 
 model-lock:
 	./.venv/bin/python scripts/model_check.py --write
+
+enrich-report:
+	./.venv/bin/python scripts/load_data.py

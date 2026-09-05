@@ -1,55 +1,90 @@
 # THE CONTRACT. Every other module reads this file.
-# PROVISIONAL until the organisers release the real data dictionary.
-# When the real schema lands, ONLY this file should need to change.
+# Now written against the REAL schema (schema/DATA_DICTIONARY.md): 3 tables,
+# bank -> account -> transaction. Indian bank narrations, INR, single company.
 
 anchor:
-  # "today" is the max date in the data, NOT the wall clock.
-  # Prevents every relative-date question returning zero rows during the demo.
-  source: transactions.txn_date
+  # "today" = the latest transaction in the data, NOT the wall clock.
+  # The dataset runs to mid-2026; wall-clock relative dates would return
+  # zero rows for every question.
+  source: transaction.transaction_date
+
+# The one queryable view. Built at load time in scripts/load_data.py so the
+# joins and the parsed counterparty are already materialised.
+base_view: txn_enriched
 
 datasets:
   transactions:
-    table: transactions
-    date_column: txn_date
-    amount_column: amount
-    grain: one row per transaction
-    columns: [txn_id, txn_date, vendor_id, account_code, category, amount, status, description]
+    view: txn_enriched
+    date_column: transaction_date
+    amount_column: transaction_amount
+    grain: one row per credit or debit
+  payouts:
+    # There is NO vendor_payouts table. "Vendor payouts" = money going out.
+    view: txn_enriched
+    date_column: transaction_date
+    amount_column: transaction_amount
+    fixed_filter: "transaction_type = 'debit'"
+    grain: one row per outgoing transaction
+  receipts:
+    view: txn_enriched
+    date_column: transaction_date
+    amount_column: transaction_amount
+    fixed_filter: "transaction_type = 'credit'"
+    grain: one row per incoming transaction
 
-  vendor_payouts:
-    table: vendor_payouts
-    date_column: payout_date
-    amount_column: amount
-    grain: one row per payout to a vendor
-    columns: [payout_id, payout_date, vendor_id, amount, status, reference]
-
-# Metrics the planner is allowed to ask for. Nothing else compiles.
 metrics:
-  sum_amount:   {sql: "SUM({amount})",   label: total amount}
-  count:        {sql: "COUNT(*)",        label: number of records}
-  avg_amount:   {sql: "AVG({amount})",   label: average amount}
-  max_amount:   {sql: "MAX({amount})",   label: largest amount}
-  min_amount:   {sql: "MIN({amount})",   label: smallest amount}
+  sum_amount: {sql: "SUM({amount})", label: total amount}
+  count:      {sql: "COUNT(*)",      label: number of transactions}
+  avg_amount: {sql: "AVG({amount})", label: average amount}
+  max_amount: {sql: "MAX({amount})", label: largest amount}
+  min_amount: {sql: "MIN({amount})", label: smallest amount}
 
-# Dimensions the planner may filter or group by. Allow-list = injection-proof.
 dimensions:
-  vendor:
-    column: vendor_id
-    lookup: {table: vendors, key: vendor_id, name: vendor_name}
-  category:     {column: category}
-  account_code: {column: account_code, lookup: {table: chart_of_accounts, key: account_code, name: account_name}}
-  status:       {column: status}
-  month:        {expr: "date_trunc('month', {date})"}
-  quarter:      {expr: "date_trunc('quarter', {date})"}
+  counterparty:     {column: counterparty}        # parsed from description
+  channel:          {column: channel}             # UPI / IMPS / NEFT / FT / ...
+  transaction_type: {column: transaction_type}    # credit | debit
+  bank_name:        {column: bank_name}
+  bank_code:        {column: bank_code}
+  account_id:       {column: account_id}
+  entity_id:        {column: entity_id}
+  program_id:       {column: program_id}
+  reconciliation:   {column: reconciliation_state}
+  month:            {expr: "date_trunc('month', {date})"}
+  quarter:          {expr: "date_trunc('quarter', {date})"}
 
-# Business definitions. Encode these by hand from the data dictionary --
-# do NOT let the model infer what "unreconciled" means.
-status_values:
-  reconciled:   [reconciled, matched, cleared]
-  unreconciled: [unreconciled, unmatched, open]
-  pending:      [pending, in_review]
+# --- DECISION, not a fact. See DECISIONS.md #1 -------------------------------
+# The schema has NO reconciliation status column, but the problem statement
+# asks for one. We define it as "does this transaction carry a reference we
+# could match against an external record". Change the expression here and the
+# whole system follows; it is deliberately in one place.
+derived:
+  reconciliation_state:
+    sql: |
+      CASE WHEN transaction_reference_id IS NOT NULL
+                 AND trim(transaction_reference_id) <> '' THEN 'reconciled'
+           ELSE 'unreconciled' END
+
+# Never returned raw in an answer or an evidence row. The data dictionary marks
+# both as sensitive; utr_number arrives already encrypted and is not searchable.
+sensitive_columns:
+  account_number: {mask: last4}
+  utr_number:     {mask: redact}
+
+# "Ref no" is ambiguous -- two columns claim it. See DECISIONS.md #2.
+# A bare "reference number" question hits transaction_reference_id (plaintext,
+# searchable). utr_number only when the user says "UTR" explicitly.
+reference_columns:
+  default: transaction_reference_id
+  explicit_utr: utr_number
 
 synonyms:
-  spend:   sum_amount
-  spent:   sum_amount
-  payouts: vendor_payouts
-  bills:   transactions
+  spend:       {dataset: payouts, metric: sum_amount}
+  spent:       {dataset: payouts, metric: sum_amount}
+  paid:        {dataset: payouts, metric: sum_amount}
+  payouts:     {dataset: payouts}
+  received:    {dataset: receipts, metric: sum_amount}
+  credits:     {dataset: receipts}
+  debits:      {dataset: payouts}
+  vendor:      {dimension: counterparty}
+  merchant:    {dimension: counterparty}
+  supplier:    {dimension: counterparty}
