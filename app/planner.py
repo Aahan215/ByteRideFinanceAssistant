@@ -249,6 +249,15 @@ CATEGORY_CUES = {
     "CHEQUE": r"cheque|check\b",
     "RENT": r"\brent\b|lease",
     "TRANSFER": r"transfer|\bupi\b|\bimps\b|\bneft\b|\brtgs\b",
+    # merchant-derived categories -- the words people actually use
+    "FOOD": r"\bfood\b|dining|eat(ing)? out|restaurant|swiggy|zomato|takeaway|order(ed|ing)? in",
+    "GROCERIES": r"grocer\w*|supermarket|kirana|provision|dmart|d-mart|big ?bazaar|household shopping",
+    "FUEL": r"\bfuel\b|petrol|diesel|\bgas station\b|filling station",
+    "HEALTHCARE": r"health\w*|medic\w*|pharmac\w*|chemist|doctor|hospital|clinic|medicine",
+    "JEWELLERY": r"jewell?\w*|\bgold\b|ornament",
+    "APPAREL": r"apparel|clothe?s|clothing|fashion|footwear|shoes|eyewear|glasses|sportswear",
+    "ELECTRONICS": r"electronic\w*|gadget|appliance|mobile phone|laptop|\btv\b",
+    "HOME": r"\bhome\b|furnitur\w*|hardware|household goods|interior",
 }
 CATEGORY_CUE_RE = {k: re.compile(v, re.I) for k, v in CATEGORY_CUES.items()}
 
@@ -265,20 +274,26 @@ def category_is_supported(question: str, category: str | None) -> bool:
     return bool(CATEGORY_CUE_RE[category].search(question))
 
 
-def category_verdict(question: str, category: str | None) -> str:
-    """One of: ok | drop | refuse.
+def category_verdict(question: str, category: str | None) -> tuple[str, str | None]:
+    """Returns (verdict, replacement) where verdict is ok | fix | drop | refuse.
 
-    Distinguishing these matters. If the user ASKED for a category we do not
-    derive, refusing is right. If the model attached a category the user never
-    mentioned, refusing throws away a perfectly answerable question -- drop the
-    invented filter and answer what was actually asked.
+    Four outcomes, because they are genuinely different situations:
+      ok      the model's category matches what the user named
+      fix     the user named a category we DO have and the model picked a
+              different one -- correct it rather than discarding the question
+      drop    the model attached a category the user never mentioned
+      refuse  the user asked for a category we do not derive
     """
     if category_is_supported(question, category):
-        return "ok"
-    # did they name some OTHER category we do know?
-    if any(rx.search(question) for k, rx in CATEGORY_CUE_RE.items() if k != category):
-        return "drop"
-    return "refuse" if CATEGORY_REQUEST_RE.search(question) else "drop"
+        return "ok", None
+    # did they name some OTHER category we know? then the model simply picked wrong
+    named = [k for k, rx in CATEGORY_CUE_RE.items()
+             if k != category and rx.search(question)]
+    if len(named) == 1:
+        return "fix", named[0]
+    if named:
+        return "drop", None
+    return ("refuse", None) if CATEGORY_REQUEST_RE.search(question) else ("drop", None)
 
 
 def out_of_scope(question: str) -> str | None:
@@ -754,15 +769,18 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
     inherited = (used_patch and prior is not None
                  and spec.filters.category == prior.filters.category)
     if spec.filters.category and not inherited:
-        verdict = category_verdict(question, spec.filters.category)
-        if verdict == "refuse":
+        verdict, replacement = category_verdict(question, spec.filters.category)
+        if verdict == "fix":
+            spec = spec.model_copy(deep=True)
+            spec.filters.category = replacement
+        elif verdict == "refuse":
             return PlanResult(
                 QuerySpec(dataset=spec.dataset, unsupported_reason=(
                     "I do not derive that category from your transactions. I can "
                     f"break spending down by: "
                     f"{', '.join(c.lower().replace('_', ' ') for c in CATEGORIES)}.")),
                 confidence="high", attempts=attempts)
-        if verdict == "drop":
+        elif verdict == "drop":
             spec = spec.model_copy(deep=True)
             spec.filters.category = None
 

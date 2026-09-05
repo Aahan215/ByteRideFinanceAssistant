@@ -60,6 +60,14 @@ CATEGORY_MEANING = {
     "CHEQUE": "cheque deposits and clearings",
     "RENT": "rent payments",
     "TRANSFER": "a plain transfer with no other category signal",
+    "FOOD": "restaurants, food delivery, cafes",
+    "GROCERIES": "supermarkets, provision and general stores",
+    "FUEL": "petrol pumps and fuel stations",
+    "HEALTHCARE": "pharmacies, hospitals, clinics, diagnostics",
+    "JEWELLERY": "jewellers and gold",
+    "APPAREL": "clothing, footwear, eyewear, sportswear",
+    "ELECTRONICS": "electronics, mobiles and appliances",
+    "HOME": "furniture, hardware, home goods",
     "UNCATEGORISED": "narration matched no rule -- internal only, never filterable",
 }
 

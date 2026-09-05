@@ -278,25 +278,35 @@ def test_markdown_fenced_json_is_parsed():
     assert got == {"dataset": "payouts", "metric": "count"}
 
 
+def test_a_category_the_user_named_is_corrected_not_discarded():
+    """"Spend on groceries" with the model answering CASH: groceries IS a
+    category now, so fix the model's choice rather than refusing."""
+    from app.planner import category_verdict
+    assert category_verdict("How much did I spend on groceries?", "CASH") == ("fix", "GROCERIES")
+    assert category_verdict("what did I spend on fuel?", "UTILITIES") == ("fix", "FUEL")
+    assert category_verdict("total spent on food", "TRANSFER") == ("fix", "FOOD")
+
+
 def test_an_invented_category_is_dropped_not_refused():
     """The model attached category=TRANSFER to "what is my spend this quarter?",
     which mentions no category. Refusing threw away an answerable question; the
     right move is to drop the filter the user never asked for."""
     from app.planner import category_verdict
-    assert category_verdict("What is my spend this quarter?", "TRANSFER") == "drop"
-    assert category_verdict("How much did I spend last month?", "CASH") == "drop"
+    assert category_verdict("What is my spend this quarter?", "TRANSFER")[0] == "drop"
+    assert category_verdict("How much did I spend last month?", "CASH")[0] == "drop"
 
 
 def test_a_category_the_user_asked_for_but_we_lack_is_refused():
     from app.planner import category_verdict
-    assert category_verdict("How much did I spend on groceries?", "CASH") == "refuse"
-    assert category_verdict("what did I spend on travel?", "UTILITIES") == "refuse"
+    for q in ["How much did I spend on travel?", "what did I spend on education?",
+              "how much on entertainment?"]:
+        assert category_verdict(q, "CASH")[0] == "refuse", q
 
 
 def test_a_correctly_named_category_passes():
     from app.planner import category_verdict
-    assert category_verdict("How much cash did I withdraw?", "CASH") == "ok"
-    assert category_verdict("total tax paid last quarter", "TAX") == "ok"
+    assert category_verdict("How much cash did I withdraw?", "CASH") == ("ok", None)
+    assert category_verdict("total tax paid last quarter", "TAX") == ("ok", None)
 
 
 def test_transactions_plus_a_direction_canonicalises_to_the_dataset():

@@ -2,9 +2,9 @@
 
 | bucket | correct | total | % |
 |---|---:|---:|---:|
-| ALL | 49 | 49 | 100% |
+| ALL | 48 | 49 | 98% |
 | aggregate | 8 | 8 | 100% |
-| ambiguous | 3 | 3 | 100% |
+| ambiguous | 2 | 3 | 67% |
 | category | 8 | 8 | 100% |
 | channel | 1 | 1 | 100% |
 | dates | 15 | 15 | 100% |
@@ -15,4 +15,8 @@
 | refusal | 8 | 8 | 100% |
 | vendor | 2 | 2 | 100% |
 
-planner latency: p50 1387ms, max 2657ms
+planner latency: p50 1388ms, max 2468ms
+
+### Failures
+
+- `amb_unknown_category` — answered when it should have declined

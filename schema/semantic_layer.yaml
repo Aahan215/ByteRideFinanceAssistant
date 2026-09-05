@@ -88,7 +88,11 @@ reference_columns:
   explicit_utr: utr_number
 
 spend_categories: [TAX, BANK_CHARGES, INTEREST, EMI_LOAN, SALARY, UTILITIES,
-                   INSURANCE, INVESTMENT, CASH, CHEQUE, RENT, TRANSFER, UNCATEGORISED]
+                   INSURANCE, INVESTMENT, CASH, CHEQUE, RENT,
+                   # derived from the MERCHANT rather than the narration keywords
+                   FOOD, GROCERIES, FUEL, HEALTHCARE, JEWELLERY, APPAREL,
+                   ELECTRONICS, HOME,
+                   TRANSFER, UNCATEGORISED]
 
 synonyms:
   spend:       {dataset: payouts, metric: sum_amount}
