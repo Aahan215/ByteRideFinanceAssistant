@@ -102,6 +102,7 @@ yours he she his her him of on for in at to by with about into onto per each
 every all any some none no not only just also too very really quite rather
 show shows showing list lists listing give gives giving tell tells telling get
 gets getting find finds finding see look looks looking check display fetch pull
+provide provides providing supply supplies supplying share shares sharing
 break breakdown broken down out up off over across through via using use used
 made make makes making go goes went going come comes came coming want wants
 wanted need needs needed like likes liked please thanks thank hey hi hello
@@ -182,6 +183,35 @@ def bank_words() -> frozenset[str]:
 _TOKEN = re.compile(r"[a-z][a-z'-]+")
 
 
+def _levenshtein(a: str, b: str) -> int:
+    if a == b:
+        return 0
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i] + [0] * len(b)
+        for j, cb in enumerate(b, 1):
+            curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + (ca != cb))
+        prev = curr
+    return prev[-1]
+
+
+def _fuzzy_covered(word: str, vocab: frozenset[str]) -> bool:
+    """Typo tolerance: a misspelling like "trasaansaction" or "insuarance"
+    should still resolve to "transaction"/"insurance" rather than refuse the
+    whole question. Edit distance 1 for short words, 2 for longer ones --
+    tight enough that two different real words rarely collide, tried only
+    against the fixed vocabulary (not vendor/bank names, which are proper
+    nouns and far more numerous, so fuzzy-matching there risks false hits).
+    """
+    max_dist = min(3, max(1, round(len(word) * 0.2)))
+    for cand in vocab:
+        if abs(len(cand) - len(word)) > max_dist:
+            continue
+        if _levenshtein(word, cand) <= max_dist:
+            return True
+    return False
+
+
 def _stem(word: str) -> set[str]:
     """Cheap inflection folding so "vendors" matches "vendor" and "paying"
     matches "pay". Not a stemmer; just the endings that matter here."""
@@ -213,6 +243,8 @@ def unresolved(question: str, spec_terms: list[str] | None = None) -> list[str]:
             continue                                   # too short to be a concept
         forms = _stem(tok)
         if forms & vocab or forms & vendors or forms & bank_words() or forms & spec_words:
+            continue
+        if _fuzzy_covered(tok, vocab):
             continue
         if tok not in out:
             out.append(tok)

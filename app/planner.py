@@ -407,12 +407,33 @@ DATASET_CUES = (
 # "Trend" is a question about time, and it is regular enough in English to
 # decide without the model -- the same lever as dates and dataset direction.
 TREND_RE = re.compile(
-    r"\b(trends?|over time|month[- ]by[- ]month|monthly|by month|per month|"
+    r"\b(trends?|over time|month[- ]by[- ]month|month[- ]on[- ]month|monthwise|"
+    r"month[- ]wise|monthly|by month|per month|"
     r"quarterly|by quarter|movement|trajectory|how .{0,20}chang\w+)\b", re.I)
 
 
 def wants_trend(question: str) -> bool:
     return bool(TREND_RE.search(question))
+
+
+# A "top N" / "bottom N" question is a ranking. If the model didn't already
+# pick a dimension to rank (no "vendor"/"category"/etc word in the question
+# for it to latch onto), the answer degenerates to one aggregate row and
+# "limit 3" does nothing -- the same class of bug as an ungrouped trend.
+# Ranking questions are almost always "which counterparty", so that is the
+# default. Direction ("bottom"/"lowest" vs "top"/"highest") is regular enough
+# in English to fix deterministically too, the same lever as trend/dataset.
+RANK_RE = re.compile(
+    r"\b(top|bottom|highest|lowest|largest|smallest|biggest|least)\b", re.I)
+BOTTOM_RE = re.compile(r"\b(bottom|lowest|smallest|least)\b", re.I)
+
+
+def wants_rank(question: str) -> bool:
+    return bool(RANK_RE.search(question))
+
+
+def wants_ascending(question: str) -> bool:
+    return bool(BOTTOM_RE.search(question))
 
 
 # "Where can I save?" / "what should I cut?" is advice-shaped. We do not give
@@ -967,6 +988,16 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
     if wants_trend(question) and not spec.group_by:
         unit = "quarter" if re.search(r"\bquarterly|by quarter\b", question, re.I) else "month"
         spec = spec.model_copy(update={"group_by": [unit]})
+
+    # "Top/bottom N" with nothing to group by is degenerate the same way an
+    # ungrouped trend is: default the ranking to counterparty. Direction
+    # ("bottom" = ascending) is fixed from the question's own words regardless
+    # of what the model picked, same rationale as dataset direction above.
+    if wants_rank(question):
+        update = {"order_desc": not wants_ascending(question)}
+        if not spec.group_by:
+            update["group_by"] = ["counterparty"]
+        spec = spec.model_copy(update=update)
 
     # Dataset direction from the user's own words, on FIRST turns too. Was only
     # applied to follow-ups. Direction words are regular enough to decide
