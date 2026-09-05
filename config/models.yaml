@@ -18,7 +18,7 @@
 # demonstrable: nobody publishes parameter counts for Gemini/GPT/Claude, so a
 # judge asking "is this under 20B?" gets no answer. Gemma, Llama and Qwen all
 # state their sizes on the model card.
-provider: gemini
+provider: ollama
 
 host:
   owner: "TODO: name"        # who runs the server
@@ -52,7 +52,7 @@ hosted_options:
 roles:
   router:
     base: gemini-3.5-flash-lite
-    ollama_base: qwen3:0.6b
+    ollama_base: qwen3:4b     # 0.6b not pulled yet; routing is not wired anyway
     derived: fin-router:v1
     temperature: 0
     top_p: 1.0

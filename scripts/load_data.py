@@ -14,7 +14,7 @@ import duckdb, pandas as pd, yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from app.enrich import parse                    # noqa: E402
+from app.enrich import parse, canonical_map     # noqa: E402
 from app.data_dictionary import duckdb_types    # noqa: E402
 
 RAW, SAMPLE, DB = ROOT / "data" / "raw", ROOT / "data" / "sample", ROOT / "data" / "finance.duckdb"
@@ -93,6 +93,24 @@ def enrich(con, chunk: int = CHUNK) -> dict:
             "coverage": round(hits / done, 4) if done else 0.0, "by_rule": by_rule}
 
 
+def canonicalise(con) -> int:
+    """Fold truncated counterparty names into their full form, once."""
+    rows = con.execute("""SELECT counterparty, COUNT(*) FROM txn_parsed
+                          WHERE counterparty IS NOT NULL GROUP BY 1""").fetchall()
+    mapping = canonical_map([(r[0], r[1]) for r in rows])
+    if not mapping:
+        return 0
+    df = pd.DataFrame({"from_name": list(mapping), "to_name": list(mapping.values())})
+    con.register("canon_df", df)
+    con.execute("CREATE OR REPLACE TABLE counterparty_canonical AS SELECT * FROM canon_df")
+    con.unregister("canon_df")
+    con.execute("""UPDATE txn_parsed SET counterparty = (
+                     SELECT to_name FROM counterparty_canonical c
+                     WHERE c.from_name = txn_parsed.counterparty)
+                   WHERE counterparty IN (SELECT from_name FROM counterparty_canonical)""")
+    return len(mapping)
+
+
 def build_view(con, with_anomalies: bool = False):
     anomaly_cols = (", a.anomaly_score, a.typical_amount, a.history_n"
                     if with_anomalies else
@@ -163,6 +181,7 @@ def main():
         print(f"  {t:12} {n:>12,} rows")
 
     stats = enrich(con)
+    n_canon = canonicalise(con)
     build_view(con)
     build_rollups(con)
     nstats, nflags = build_stats(con)
@@ -178,6 +197,7 @@ def main():
     print("\ncategories:")
     for c, n in cats:
         print(f"  {c:16} {n:>10,}")
+    print(f"canonicalised {n_canon} truncated vendor names into their full form")
     total = con.execute("SELECT COUNT(*) FROM txn_enriched").fetchone()[0]
     print(f"\nanomaly detection: {nstats:,} counterparties with enough history, "
           f"{nflags:,} flagged rows ({100*nflags/max(total,1):.2f}%)")

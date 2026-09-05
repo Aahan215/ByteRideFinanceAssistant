@@ -60,3 +60,13 @@ def test_a_resolved_family_satisfies_a_canonical_expectation():
                                         "DMART AVENUE SUPERMARTS SAKET DELHI"]}}
     assert subset_match(got, {"filters": {"counterparty": "DMART AVENUE SUPERMARTS"}})
     assert not subset_match(got, {"filters": {"counterparty": "SWIGGY INSTAMART"}})
+
+
+def test_a_truncated_vendor_name_is_the_same_merchant():
+    """Field-length limits cut narrations mid-word, producing "ZOMATO H"
+    alongside "ZOMATO HYPERPURE". Treating the stub as a separate merchant made
+    every lookup for that vendor ambiguous and refuse."""
+    known = ["ZOMATO HYPERPURE", "ZOMATO H", "ZOMATO HYPER", "SWIGGY INSTAMART"]
+    resolved, candidates, how = resolve_counterparty("zomato", known)
+    assert how == "family" and resolved is not None
+    assert "ZOMATO HYPERPURE" in resolved and "SWIGGY INSTAMART" not in resolved

@@ -21,7 +21,11 @@ TIMEOUT = float(os.getenv("LLM_TIMEOUT", "90"))
 PROVIDER = os.getenv("LLM_PROVIDER", CFG.get("provider", "ollama"))
 # Ollama serves params baked into a derived model; a hosted API takes them per
 # request, so there is nothing to derive and we call the base model directly.
-MODEL_KEY = "derived" if PROVIDER == "ollama" else "base"
+# Was "derived" (a Modelfile with params baked in) because the OpenAI-compat
+# endpoint could not pass num_ctx. The native path passes every option per
+# request, so the extra build step is gone -- one less thing to run on a fresh
+# clone, and one less way for the team's configs to diverge.
+MODEL_KEY = "ollama_base" if PROVIDER == "ollama" else "base"
 
 DEFAULT_BASE_URL = {
     "ollama": "http://localhost:11434/v1",

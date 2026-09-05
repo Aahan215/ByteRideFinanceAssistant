@@ -86,3 +86,29 @@ def test_trailing_reference_number_does_not_split_a_vendor():
 
 def test_a_name_ending_in_a_small_number_survives():
     assert "2" in (parse("NEFT/1/ICIC/SHOP 42 TRADERS").counterparty or "")
+
+
+def test_a_reversal_narration_credits_the_original_payee():
+    p = parse("REV/S793178838/NEFT  - UTIB0790001 - 95604250 - 9087551396 - ZOMATO HYPERPURE")
+    assert p.counterparty == "ZOMATO HYPERPURE"
+    assert p.channel == "NEFT"
+
+
+def test_truncated_names_fold_into_the_full_name():
+    from app.enrich import canonical_map
+    m = canonical_map([("ZOMATO", 12), ("ZOMATO HYPER", 30), ("ZOMATO HYPERPURE", 6000)])
+    assert m["ZOMATO"] == "ZOMATO HYPERPURE"
+    assert m["ZOMATO HYPER"] == "ZOMATO HYPERPURE"
+
+
+def test_different_merchants_sharing_a_word_are_left_alone():
+    from app.enrich import canonical_map
+    m = canonical_map([("SELECTION", 5), ("SELECTION MOBILE", 900),
+                       ("SELECTION ELECTRONICS", 800)])
+    assert "SELECTION" not in m
+
+
+def test_branch_suffixes_do_not_absorb_the_base_name():
+    from app.enrich import canonical_map
+    m = canonical_map([("DMART AVENUE", 3), ("DMART AVENUE SUPERMARTS", 5000)])
+    assert m["DMART AVENUE"] == "DMART AVENUE SUPERMARTS"

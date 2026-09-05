@@ -140,10 +140,16 @@ def normalise(name: str) -> str:
     return n
 
 
+# A reversal wraps the original narration: "REV/<ref>/<original>". The payee is
+# in the inner part, so strip the wrapper before parsing rather than treating
+# "REV" as the counterparty.
+REVERSAL_RE = re.compile(r"^\s*(REV|RVSL|REVERSAL)/[^/]*/", re.I)
+
+
 def parse(description: str | None) -> Parsed:
     if not description or not description.strip():
         return Parsed(None, None, None, "empty")
-    d = description.strip()
+    d = REVERSAL_RE.sub("", description.strip()).strip() or description.strip()
 
     channel = next((name for name, rx in CHANNELS if rx.search(d)), None)
 
@@ -187,3 +193,50 @@ def parse(description: str | None) -> Parsed:
     if not _plausible_name(raw):
         return Parsed(channel, None, None, "unparsed", cat, cat_by)
     return Parsed(channel, raw, normalise(raw), rule, cat, cat_by)
+
+
+def canonical_map(names_with_counts: list[tuple[str, int]]) -> dict[str, str]:
+    """Fold truncated vendor names into the full name they are a prefix of.
+
+    Bank narrations get cut by field-length limits, so the same merchant appears
+    as "ZOMATO", "ZOMATO HYPER" and "ZOMATO HYPERPURE". Left alone, an exact
+    match on the stub wins a lookup and returns a vendor with no transactions.
+
+    Handles truncation at a word boundary AND mid-word. A stub folds in ONLY
+    when every longer name extending it agrees -- "ZOMATO" extends only to
+    "ZOMATO HYPERPURE...", so it folds; "SELECTION" extends to both "SELECTION
+    MOBILE" and "SELECTION ELECTRONICS", which are different merchants, so it
+    is left alone.
+
+    Runs once at load time; queries then see a clean vocabulary.
+    """
+    names = [n for n, _ in names_with_counts if n]
+    counts = dict(names_with_counts)
+    by_len = sorted(names, key=len)
+    direct: dict[str, str] = {}
+
+    for short in names:
+        # every longer name this could be a truncation of
+        ext = [n for n in by_len if n != short and n.startswith(short)]
+        if not ext:
+            continue
+        root = ext[0]                       # shortest extension
+        if not all(n.startswith(root) for n in ext):
+            continue                        # extensions diverge -> different merchants
+        # a word-boundary stub must not swallow a genuinely different merchant:
+        # require the extension to continue the same word or add whole words
+        if short and not short.endswith(" ") and not root[len(short):].startswith(" ") \
+                and " " in root[len(short):].strip():
+            pass                            # mid-word truncation, still one merchant
+        direct[short] = root
+
+    # follow chains: ZOMATO -> ZOMATO HYPER -> ZOMATO HYPERPURE
+    resolved: dict[str, str] = {}
+    for short in direct:
+        seen, cur = {short}, direct[short]
+        while cur in direct and direct[cur] not in seen:
+            seen.add(cur)
+            cur = direct[cur]
+        if cur != short:
+            resolved[short] = cur
+    return resolved

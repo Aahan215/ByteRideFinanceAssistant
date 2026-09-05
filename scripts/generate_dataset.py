@@ -553,7 +553,11 @@ def augment_chunk(rs, df, enc, end_boundary):
         new_dates = base["transaction_date"].to_numpy() + delay
         new_dates = np.minimum(new_dates, end_boundary)
         ref_txt = base["transaction_reference_id"].fillna("NA").astype(str)
-        trunc_desc = base["description"].astype(str).str.slice(0, 60)
+        # Cut at a word boundary. Slicing mid-word produced vendor names like
+        # "ZOMATO H" and "ZOMATO HYPER", which the parser then treated as
+        # separate merchants and vendor lookups started refusing.
+        trunc_desc = (base["description"].astype(str).str.slice(0, 60)
+                      .str.replace(r"\s+\S*$", "", regex=True))
         new_desc = "REV/" + ref_txt + "/" + trunc_desc
         new_utr = np.where(rs.random(n_rev) < 0.40, None,
                            np.array([f"UTR{x}" for x in rs.integers(10**11, 10**12, n_rev)], dtype=object))

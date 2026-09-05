@@ -36,9 +36,18 @@ def _family(names: list[str]) -> list[str] | None:
     from app.enrich import normalise
     if len(names) < 2:
         return None
-    norm = {n: normalise(n).split() for n in names}
-    base = min(norm.values(), key=len)
-    if all(toks[:len(base)] == base for toks in norm.values()):
+    norm = {n: normalise(n) for n in names}
+    shortest = min(norm.values(), key=len)
+
+    # Same merchant plus extra words: "X" and "X ANDHERI WEST".
+    base = shortest.split()
+    if all(v.split()[:len(base)] == base for v in norm.values()):
+        return sorted(names)
+
+    # Same merchant, one name TRUNCATED: "ZOMATO H" and "ZOMATO HYPERPURE".
+    # Real narrations get cut by field-length limits, and treating the stub as a
+    # separate merchant made every lookup for that vendor ambiguous.
+    if len(shortest) >= 6 and all(v.startswith(shortest) for v in norm.values()):
         return sorted(names)
     return None
 
