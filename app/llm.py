@@ -159,8 +159,17 @@ def _extract_json(raw: str) -> dict:
 def chat_json(role: str, system: str, user: str, *, temperature: float | None = None) -> dict:
     """Small models wrap JSON in prose or fences more often than large ones.
     Salvage it rather than failing the query."""
+    # First try: json_mode on
     raw = chat(role, system, user, temperature=temperature, json_mode=True)
-    return _extract_json(raw)
+    try:
+        return _extract_json(raw)
+    except ValueError:
+        pass
+    # Retry without json_mode — some models think before JSON and exhaust tokens.
+    # Append a hard nudge and give more room.
+    raw2 = chat(role, system, user + "\n\nRespond with ONLY a JSON object. No explanation.",
+                temperature=temperature, json_mode=False, max_tokens=768)
+    return _extract_json(raw2)
 
 
 def efficiency_report() -> dict:
