@@ -8,7 +8,7 @@ comparable to anyone else's.
 import hashlib, json, pathlib, sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from app.llm import ROLES, BASE_URL, chat, ModelUnavailable
+from app.llm import ROLES, BASE_URL, PROVIDER, MODELS, chat, ModelUnavailable
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LOCK = ROOT / "config" / "canary.lock"
@@ -24,10 +24,14 @@ def fingerprint(role: str) -> str:
 
 def main():
     write = "--write" in sys.argv
-    print(f"endpoint: {BASE_URL}")
-    if BASE_URL.startswith(("http://localhost", "http://127.0.0.1")) and not write:
+    print(f"provider: {PROVIDER}\nendpoint: {BASE_URL}")
+    for role, model in MODELS.items():
+        print(f"  {role:9} -> {model}")
+    print()
+    if PROVIDER == "ollama" and not write and \
+            BASE_URL.startswith(("http://localhost", "http://127.0.0.1")):
         print("!! You are pointing at localhost. Unless you are the host, set "
-              "LLM_BASE_URL in .env to the shared server.")
+              "LLM_BASE_URL in .env to the shared server.\n")
 
     lock = json.loads(LOCK.read_text()) if LOCK.exists() else {}
     results, drift = {}, False

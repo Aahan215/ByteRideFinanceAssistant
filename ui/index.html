@@ -37,6 +37,11 @@
   .chip.medium,.chip.low{color:var(--warn);background:var(--warn-bg);border-color:transparent}
   .note{margin-top:12px;padding:9px 12px;border-radius:8px;font-size:13px;
         background:var(--warn-bg);color:var(--warn)}
+  .flag{margin-top:10px;padding:9px 12px;border-radius:8px;font-size:13px;
+        background:var(--accent-soft);color:var(--ink);border-left:3px solid var(--accent)}
+  .flag b{font-weight:650}
+  .why{margin-top:8px;font-size:12.5px;color:var(--muted)}
+  .why li{margin:2px 0}
   .refusal .answer{color:var(--info)}
   .refusal{border-left:3px solid var(--info)}
   table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13.5px}
@@ -147,8 +152,21 @@ function render(d){
   const meta = el('<div class="meta"></div>');
   if (d.window) meta.appendChild(el(`<span class="chip">${esc(d.window)}</span>`));
   if (!refused) meta.appendChild(el(`<span class="chip ${esc(d.confidence)}">confidence: ${esc(d.confidence)}</span>`));
+  if (d.anomalies && d.anomalies.length)
+    meta.appendChild(el(`<span class="chip medium">${d.anomalies.length} unusual amount${d.anomalies.length > 1 ? 's' : ''}</span>`));
   if (refused) meta.appendChild(el(`<span class="chip">not answerable from this data</span>`));
   card.appendChild(meta);
+
+  // A bare badge tells the user nothing; say WHY confidence is not high.
+  if (d.confidence_reasons && d.confidence_reasons.length){
+    card.appendChild(el(`<div class="why"><ul>${
+      d.confidence_reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul></div>`));
+  }
+
+  // Anomaly callouts, alongside the original answer rather than as a
+  // separate question -- which is what the brief asks for.
+  (d.anomalies || []).forEach(a =>
+    card.appendChild(el(`<div class="flag"><b>Unusual:</b> ${esc(a)}</div>`)));
 
   // Warnings carry real substance -- e.g. spend excluded from a ranking.
   (d.warnings || []).forEach(w => card.appendChild(el(`<div class="note">${esc(w)}</div>`)));

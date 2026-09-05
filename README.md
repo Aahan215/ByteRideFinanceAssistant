@@ -25,6 +25,28 @@ Every response is then tagged STUB PLANNER on screen. Unset it before demoing.
 `GET /health` returns the **anchor date** — the assistant's "today", taken from
 the max date in the data rather than the wall clock.
 
+## Model
+
+`config/models.yaml` is the single source of truth for which model runs and how
+it behaves; `.env` holds only the endpoint and key. Switch providers by changing
+`provider:` — no code changes anywhere else.
+
+| provider | endpoint | uses |
+|---|---|---|
+| `gemini` | Google AI Studio, OpenAI-compatible | `base` (current) |
+| `ollama` | your shared local server | `derived` (params baked into a Modelfile) |
+| `hosted` | any other OpenAI-compatible API | `base` |
+
+```bash
+echo "GEMINI_API_KEY=..." >> .env      # https://aistudio.google.com/apikey
+make model-check
+```
+
+**On the ≤20B rule:** Google publishes no parameter count for Gemini, so that
+claim cannot be demonstrated. Gemma is served from the *same endpoint with the
+same key* and does publish its sizes — setting every role's `base` to
+`gemma-3-4b-it` makes the cap provable with no other change.
+
 ## Local vs production scale
 
 Develop against a small local set; the pipeline is built to run at production

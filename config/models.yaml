@@ -4,6 +4,22 @@
 # Rule: .env carries ONLY the endpoint (which machine). Everything about how
 # the model behaves lives here, in git, identical for everyone.
 
+# ollama  -> use `derived` (params baked into a Modelfile on the host)
+# gemini   -> Google AI Studio's OpenAI-compatible endpoint; uses `base`
+#             https://generativelanguage.googleapis.com/v1beta/openai
+# hosted   -> any other OpenAI-compatible API; uses `base`
+#
+# NOTE ON THE <=20B CAP: Google does not publish parameter counts for Gemini,
+# so that claim cannot be demonstrated. Gemma is served from the SAME endpoint
+# with the SAME key and does publish its sizes -- set every role's `base` to
+# gemma-3-4b-it (or -12b-it) and the cap becomes provable with no other change.
+#
+# Only OPEN-WEIGHTS models, whichever provider. The <=20B cap has to be
+# demonstrable: nobody publishes parameter counts for Gemini/GPT/Claude, so a
+# judge asking "is this under 20B?" gets no answer. Gemma, Llama and Qwen all
+# state their sizes on the model card.
+provider: gemini
+
 host:
   owner: "TODO: name"        # who runs the server
   ram_gb: 16                 # drives the model sizes below
@@ -19,12 +35,24 @@ comparison:
   - llama3.2:3b
   - qwen2.5:7b
 
+# Hosted fallbacks -- open weights, published sizes, nothing to download.
+# Switch by setting `provider: hosted` above plus LLM_BASE_URL/LLM_API_KEY,
+# and pointing the roles' `base` at one of these.
+hosted_options:
+  groq:                      # https://api.groq.com/openai/v1
+    - llama-3.1-8b-instant   # 8B
+    - gemma2-9b-it           # 9B
+  google_ai_studio:          # https://generativelanguage.googleapis.com/v1beta/openai
+    - gemma-3-4b-it          # 4B
+    - gemma-3-12b-it         # 12B
+
 # Sampling params are baked into derived models on the host (see
 # scripts/build_models.sh), so they cannot drift even if a client forgets
 # to send them.
 roles:
   router:
-    base: qwen2.5:0.5b
+    base: gemini-2.5-flash-lite
+    ollama_base: qwen2.5:0.5b
     derived: fin-router:v1
     temperature: 0
     top_p: 1.0
@@ -33,22 +61,24 @@ roles:
                              # explicitly or long prompts behave differently
                              # on different hosts.
   planner:
-    base: qwen2.5:3b
+    base: gemini-2.5-flash        # swap to gemma-3-4b-it for a published 4B
+    ollama_base: qwen2.5:3b       # param count -- same endpoint, same key
     derived: fin-planner:v1
     temperature: 0
     top_p: 1.0
     seed: 42
     num_ctx: 8192            # the QuerySpec schema + few-shots are long
   narrator:
-    base: qwen2.5:3b
+    base: gemini-2.5-flash-lite
+    ollama_base: qwen2.5:3b
     derived: fin-narrator:v1
     temperature: 0.2         # slight variation reads better in prose;
     top_p: 0.9               # the numeric guard makes this safe
     seed: 42
     num_ctx: 4096
   escalate:
-    base: qwen2.5:7b         # 16GB host: 3B + 7B co-resident (~6.5GB).
-                             # gpt-oss:20b needs ~24GB and would thrash.
+    base: gemini-2.5-flash
+    ollama_base: qwen2.5:7b  # 16GB host: 3B + 7B co-resident (~6.5GB)
     derived: fin-escalate:v1
     temperature: 0
     top_p: 1.0

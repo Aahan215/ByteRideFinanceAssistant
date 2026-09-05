@@ -69,7 +69,7 @@ Copy into GitHub Issues so blockers are visible.
 | U2 | Breakdown table | S | |
 | U3 | ~~Collapsible SQL + masked evidence~~ | — | **done** — evidence provably matches the aggregate |
 | U4 | Refusal / clarification / warning states | M | Must look intentional, not like an error |
-| U5 | Confidence badge + anomaly flags | S | |
+| U5 | ~~Confidence badge + anomaly flags~~ | — | **done**, each downgrade carries a reason |
 | U6 | ~~Export button~~ | — | **done** (CSV + xlsx) |
 | U7 | ~~Anchor-date banner~~ | — | **done** — "Data through 29 Jun 2026" |
 

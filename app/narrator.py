@@ -87,3 +87,14 @@ def with_comparison(text: str, comp, spec) -> str:
     verb = "up" if top["delta"] > 0 else "down"
     return (f"{text} Compared with {comp.window}, the biggest move is "
             f"{top[key]}, {verb} {inr(abs(top['delta']))}.")
+
+
+def with_anomalies(text: str, flags) -> str:
+    """Append the callout. The problem statement asks for this alongside the
+    original answer, not as a separate question."""
+    if not flags:
+        return text
+    if len(flags) == 1:
+        return f"{text} Worth a look: {flags[0].sentence()}."
+    joined = "; ".join(f.sentence() for f in flags[:3])
+    return f"{text} Worth a look: {joined}."

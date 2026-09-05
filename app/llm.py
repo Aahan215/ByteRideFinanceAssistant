@@ -12,15 +12,27 @@ import httpx, yaml
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CFG = yaml.safe_load((ROOT / "config" / "models.yaml").read_text())
 
-BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
-API_KEY = os.getenv("LLM_API_KEY", "ollama")
+# defined after PROVIDER below via _resolve(); see DEFAULT_BASE_URL
+API_KEY = os.getenv("LLM_API_KEY") or os.getenv("GEMINI_API_KEY") or "ollama"
 TIMEOUT = float(os.getenv("LLM_TIMEOUT", "90"))
 
+PROVIDER = os.getenv("LLM_PROVIDER", CFG.get("provider", "ollama"))
+# Ollama serves params baked into a derived model; a hosted API takes them per
+# request, so there is nothing to derive and we call the base model directly.
+MODEL_KEY = "derived" if PROVIDER == "ollama" else "base"
+
+DEFAULT_BASE_URL = {
+    "ollama": "http://localhost:11434/v1",
+    "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+}.get(PROVIDER, "http://localhost:11434/v1")
+
+BASE_URL = os.getenv("LLM_BASE_URL", DEFAULT_BASE_URL)
+
 ROLES = CFG["roles"]
-MODELS = {r: c["derived"] for r, c in ROLES.items()}
+MODELS = {r: c[MODEL_KEY] for r, c in ROLES.items()}
 
 
-def set_model(role: str, model: str) -> None:
+def set_model(role: str, model: str) -> None:  # noqa: D401
     """Point one role at a different model for this process only.
 
     Used by the eval harness to run the same golden set across candidates --
@@ -28,7 +40,7 @@ def set_model(role: str, model: str) -> None:
     request-handling code: the committed config is what makes the team's
     numbers comparable.
     """
-    ROLES[role] = {**ROLES[role], "derived": model}
+    ROLES[role] = {**ROLES[role], MODEL_KEY: model}
     MODELS[role] = model
 
 
@@ -43,16 +55,20 @@ USAGE: list[dict] = []   # append-only call log -> efficiency stats for the deck
 def chat(role: str, system: str, user: str, *, temperature: float | None = None,
          json_mode: bool = False, max_tokens: int = 800) -> str:
     cfg = ROLES[role]
+    model = cfg.get(MODEL_KEY, cfg["base"])
     payload = {
-        "model": cfg["derived"],
+        "model": model,
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": user}],
         # committed defaults; only self-consistency sampling overrides them
         "temperature": cfg["temperature"] if temperature is None else temperature,
         "top_p": cfg["top_p"],
-        "seed": cfg["seed"],
         "max_tokens": max_tokens,
     }
+    # `seed` is an Ollama/OpenAI parameter; Google's compatibility layer
+    # rejects unknown fields, so only send it where it is supported.
+    if PROVIDER in ("ollama", "hosted"):
+        payload["seed"] = cfg["seed"]
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
 
@@ -60,21 +76,29 @@ def chat(role: str, system: str, user: str, *, temperature: float | None = None,
         r = httpx.post(f"{BASE_URL}/chat/completions", json=payload, timeout=TIMEOUT,
                        headers={"Authorization": f"Bearer {API_KEY}"})
     except httpx.ConnectError as e:
+        raise ModelUnavailable(f"Cannot reach {BASE_URL}.") from e
+
+    if r.status_code in (401, 403):
         raise ModelUnavailable(
-            f"Cannot reach the shared model server at {BASE_URL}.\n"
-            f"Check the host machine is awake, then run `make model-check`.\n"
-            f"Do NOT start your own Ollama -- results stop being comparable."
-        ) from e
+            f"{BASE_URL} rejected the credentials. Set GEMINI_API_KEY in .env "
+            f"(get one from https://aistudio.google.com/apikey)."
+            if PROVIDER == "gemini" else
+            f"{BASE_URL} rejected the credentials. Check LLM_API_KEY in .env.")
+    if r.status_code == 429:
+        raise ModelUnavailable(
+            f"Rate limited by {BASE_URL}. Free tiers throttle quickly -- an eval "
+            f"run is ~150 calls. Wait, or lower confidence.samples in "
+            f"config/models.yaml.")
 
     if r.status_code == 404:
         raise ModelUnavailable(
-            f"Model '{cfg['derived']}' is missing on the host. "
-            f"The host must run `make model-build`."
+            f"Model '{model}' is not available at {BASE_URL}."
+            + (" The host must run `make model-build`." if PROVIDER == "ollama" else "")
         )
     r.raise_for_status()
 
     data = r.json()
-    USAGE.append({"role": role, "model": cfg["derived"],
+    USAGE.append({"role": role, "model": model,
                   "tokens": data.get("usage", {}).get("total_tokens")})
     return data["choices"][0]["message"]["content"]
 

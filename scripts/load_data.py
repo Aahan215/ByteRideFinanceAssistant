@@ -85,20 +85,27 @@ def enrich(con, chunk: int = CHUNK) -> dict:
             "coverage": round(hits / done, 4) if done else 0.0, "by_rule": by_rule}
 
 
-def build_view(con):
-    con.execute("""
+def build_view(con, with_anomalies: bool = False):
+    anomaly_cols = (", a.anomaly_score, a.typical_amount, a.history_n"
+                    if with_anomalies else
+                    ", NULL AS anomaly_score, NULL AS typical_amount, NULL AS history_n")
+    anomaly_join = ("LEFT JOIN txn_anomaly a USING (transaction_id)"
+                    if with_anomalies else "")
+    con.execute(f"""
         CREATE OR REPLACE VIEW txn_enriched AS
         SELECT t.transaction_id, t.account_id, t.transaction_date, t.transaction_type,
                t.description, t.transaction_amount, t.transaction_reference_id,
                t.utr_number,
                p.channel, p.counterparty, p.counterparty_raw, p.parsed_by,
                p.category, p.category_by,
-               a.entity_id, a.account_number, a.program_id, a.available_balance,
-               a.bank_code, b.bank_name
+               acc.entity_id, acc.account_number, acc.program_id, acc.available_balance,
+               acc.bank_code, b.bank_name
+               {anomaly_cols}
         FROM "transaction" t
         LEFT JOIN txn_parsed p USING (transaction_id)
-        LEFT JOIN account a  USING (account_id)
-        LEFT JOIN bank    b  ON b.bank_code = a.bank_code
+        LEFT JOIN account acc USING (account_id)
+        LEFT JOIN bank    b   ON b.bank_code = acc.bank_code
+        {anomaly_join}
     """)
 
 
@@ -114,6 +121,30 @@ def build_rollups(con):
     """)
 
 
+def build_stats(con):
+    """Per-vendor robust statistics, then the anomaly flags themselves.
+
+    Scoring every row at query time costs ~150ms at 2M and would be seconds at
+    20M. Anomalies are ~0.1% of rows, so we score once here and keep only the
+    ones that clear the threshold -- a tiny table the query just joins to.
+    """
+    from app.anomaly import build_stats_sql, score_sql, THRESHOLD
+    con.execute(build_stats_sql())
+    n_stats = con.execute("SELECT COUNT(*) FROM counterparty_stats").fetchone()[0]
+
+    con.execute(f"""
+        CREATE OR REPLACE TABLE txn_anomaly AS
+        SELECT * FROM (
+            SELECT t.transaction_id, s.typical_amount, s.n AS history_n,
+                   {score_sql()} AS anomaly_score
+            FROM txn_enriched t JOIN counterparty_stats s USING (counterparty)
+            WHERE t.transaction_amount > 0
+        ) WHERE anomaly_score >= {THRESHOLD}
+    """)
+    n_flags = con.execute("SELECT COUNT(*) FROM txn_anomaly").fetchone()[0]
+    return n_stats, n_flags
+
+
 def main():
     DB.parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(DB))
@@ -126,6 +157,8 @@ def main():
     stats = enrich(con)
     build_view(con)
     build_rollups(con)
+    nstats, nflags = build_stats(con)
+    build_view(con, with_anomalies=True)      # re-declare the view to expose them
 
     lo, hi = con.execute("SELECT MIN(transaction_date), MAX(transaction_date) FROM txn_enriched").fetchone()
     print(f"\nenrichment: counterparty parsed for {stats['counterparty_hits']}/{stats['rows']} "
@@ -137,6 +170,9 @@ def main():
     print("\ncategories:")
     for c, n in cats:
         print(f"  {c:16} {n:>10,}")
+    total = con.execute("SELECT COUNT(*) FROM txn_enriched").fetchone()[0]
+    print(f"\nanomaly detection: {nstats:,} counterparties with enough history, "
+          f"{nflags:,} flagged rows ({100*nflags/max(total,1):.2f}%)")
     print(f"\ndate range: {lo} .. {hi}")
     print(f"ANCHOR DATE (the assistant's 'today'): {hi}")
     print(f"\ndone -> {DB}")

@@ -99,6 +99,50 @@ def compile_null_group_sql(spec: QuerySpec, anchor) -> tuple[str, list] | None:
             f"WHERE {' AND '.join(where)}"), params
 
 
+def compile_count_sql(spec: QuerySpec, anchor) -> tuple[str, list]:
+    """How many transactions the answer actually rests on. Feeds the confidence
+    signal -- an aggregate over six rows is not a trend."""
+    ds = SEMANTIC["datasets"][spec.dataset]
+    view, date_col, amt_col = ds["view"], ds["date_column"], ds["amount_column"]
+    where, params = _where(spec, date_col, amt_col)
+    if ds.get("fixed_filter"):
+        where.insert(0, ds["fixed_filter"])
+    for dim in spec.group_by:
+        where.append(f"{_dim_expr(dim, date_col)} IS NOT NULL")
+    start, end = resolve(spec.date_range, anchor)
+    if start:
+        where.append(f"{date_col} >= ?"); params.append(start)
+    if end:
+        where.append(f"{date_col} < ?"); params.append(end)
+    sql = f"SELECT COUNT(*) AS n FROM {view}"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    return sql, params
+
+
+def compile_anomaly_sql(spec: QuerySpec, anchor, limit: int = 3):
+    """Unusual amounts among ALL rows the answer covers.
+
+    Reads the flags materialised at load time, so this is a filter on a sparse
+    column rather than a full rescore.
+    """
+    ds = SEMANTIC["datasets"][spec.dataset]
+    view, date_col, amt_col = ds["view"], ds["date_column"], ds["amount_column"]
+    where, params = _where(spec, date_col, amt_col)
+    if ds.get("fixed_filter"):
+        where.insert(0, ds["fixed_filter"])
+    start, end = resolve(spec.date_range, anchor)
+    if start:
+        where.append(f"{date_col} >= ?"); params.append(start)
+    if end:
+        where.append(f"{date_col} < ?"); params.append(end)
+    where.append("anomaly_score IS NOT NULL")
+    sql = (f"SELECT counterparty, transaction_amount, transaction_date, "
+           f"typical_amount, history_n AS n, anomaly_score AS score FROM {view} "
+           f"WHERE {' AND '.join(where)} ORDER BY anomaly_score DESC LIMIT {limit * 4}")
+    return sql, params
+
+
 def evidence_columns() -> str:
     """The drill-down projection. Sensitive columns are masked in SQL so raw
     values never reach the API layer, let alone the model or the screen."""

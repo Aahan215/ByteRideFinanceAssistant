@@ -9,11 +9,14 @@ from pydantic import BaseModel
 
 from app.db import anchor_date, run
 from app.spec import QuerySpec
-from app.compiler import compile_sql, compile_evidence_sql, compile_null_group_sql
+from app.compiler import (compile_sql, compile_evidence_sql,
+                          compile_null_group_sql, compile_count_sql,
+                          compile_anomaly_sql)
+import duckdb
 import pandas as pd
 
 from app.dates import resolve, describe
-from app import validator, narrator
+from app import validator, narrator, anomaly, confidence
 
 app = FastAPI(title="Finance Assistant")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -50,6 +53,8 @@ class Answer(BaseModel):
     breakdown: list[dict] = []
     evidence: list[dict] = []
     comparison: Comparison | None = None
+    anomalies: list[str] = []          # unusual amounts spotted while answering
+    confidence_reasons: list[str] = []  # why the badge says what it says
     warnings: list[str] = []
     refused: bool = False
     spec: dict | None = None       # what we actually ran -- powers export + "show your working"
@@ -72,10 +77,12 @@ def answer_spec(spec: QuerySpec, question: str = "") -> Answer:
     text = narrator.narrate(question, df, spec, window)
 
     warnings = list(v.warnings)
+    excluded_rows = 0
     nulls = compile_null_group_sql(spec, anchor_date())
     if nulls:
         nrow = run(*nulls)
         excluded, nrows = nrow.iloc[0]["excluded"], int(nrow.iloc[0]["rows"])
+        excluded_rows = nrows
         if nrows:
             warnings.append(
                 f"{narrator.inr(excluded)} across {nrows:,} transactions has no "
@@ -83,13 +90,35 @@ def answer_spec(spec: QuerySpec, question: str = "") -> Answer:
                 f"cash have no payee) and is not in this breakdown.")
 
     comparison = None
+    before = len(warnings)
     if spec.compare_to is not None:
         comparison = _compare(spec, df, warnings)
         text = narrator.with_comparison(text, comparison, spec)
+    mismatch = any("differ in length" in w for w in warnings[before:])
+
+    # Anomaly callouts, computed on the evidence rows we already fetched, so a
+    # callout can only ever name a record the user can see for themselves.
+    # No bare `except: pass` here -- a swallowed error looks exactly like
+    # "no anomalies found", which hid a broken query through two test rounds.
+    flags = []
+    try:
+        flags = anomaly.from_scan(run(*compile_anomaly_sql(spec, anchor_date())))
+    except duckdb.CatalogException:
+        pass                          # stats table not built yet -- fine
+    except Exception as e:
+        warnings.append(f"Anomaly check unavailable: {type(e).__name__}.")
+    if flags:
+        text = narrator.with_anomalies(text, flags)
+
+    row_count = int(run(*compile_count_sql(spec, anchor_date())).iloc[0]["n"])
+    a = confidence.assess(spec=spec, row_count=row_count, excluded_rows=excluded_rows,
+                          warnings=warnings, comparison_mismatch=mismatch)
 
     return Answer(answer=text, sql=sql, window=window,
                   breakdown=_clean(df), evidence=_clean(ev.head(25)),
                   comparison=comparison, warnings=warnings,
+                  anomalies=[f.sentence() for f in flags],
+                  confidence=a.level, confidence_reasons=a.reasons,
                   spec=spec.model_dump(mode="json"))
 
 
@@ -196,7 +225,14 @@ def ask(req: Ask):
     SESSIONS[req.session_id] = result.spec
     out = answer_spec(result.spec, req.question)
     if not out.refused:
-        out.confidence = result.confidence
+        # Fold the model's self-consistency into the deterministic assessment
+        # rather than replacing it -- both signals matter.
+        a = confidence.assess(spec=result.spec, warnings=out.warnings,
+                              planner_confidence=result.confidence)
+        order = {"n/a": -1, "high": 0, "medium": 1, "low": 2}
+        if order[a.level] > order[out.confidence]:
+            out.confidence = a.level
+        out.confidence_reasons = list(dict.fromkeys(out.confidence_reasons + a.reasons))
         if result.matched_date_text:
             out.warnings.append(
                 f'Read "{result.matched_date_text}" as {out.window}.')
