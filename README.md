@@ -1,125 +1,115 @@
-# Finance Assistant — BVP Tech Catalyst Hackathon
+# ByteRide Finance Assistant — BVP Tech Catalyst Hackathon
 
-Natural-language questions over a financial ledger. Every answer is computed by
-SQL against real records; the model translates intent and narrates results, and
-never produces a number itself.
+A conversational AI assistant that answers plain-language questions about
+financial data. Every answer is computed by SQL against real records; the model
+translates intent and narrates results, and never produces a number itself.
 
-## Setup
+## Quick Start
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python scripts/load_data.py  # falls back to data/sample/seed.sql until the
-                             # organisers' CSVs land in data/raw/
-python scripts/schema_check.py   # verify the load matches the data dictionary
-uvicorn app.api:app --reload      # UI at http://localhost:8000
+
+# Generate 1000-row sample dataset (dates up to today)
+python scripts/generate_dataset.py --rows 1000 --no-encrypt
+
+# Load data into DuckDB
+python scripts/load_data.py
+
+# Start Ollama (separate terminal)
+ollama serve
+ollama pull qwen3:4b
+
+# Start the API + UI
+export LLM_PROVIDER=ollama
+export LLM_BASE_URL=http://localhost:11434/v1
+export LLM_API_KEY=ollama
+uvicorn app.api:app --reload
 ```
 
-No model yet? Develop the UI against keyword rules instead:
+Open **http://localhost:8000** for the chat UI.
 
-```bash
-FINANCE_STUB_PLANNER=1 uvicorn app.api:app --reload
-```
+## Date Handling
 
-Every response is then tagged STUB PLANNER on screen. Unset it before demoing.
+The assistant uses the **current wall clock date** as "today". Relative date
+phrases resolve against the real date:
+- "this month" = current calendar month
+- "last month" = previous calendar month
+- "last 3 months" = trailing 3 months from today
 
-`GET /health` returns the **anchor date** — the assistant's "today", taken from
-the max date in the data rather than the wall clock.
+`GET /health` returns today's date for the UI to display.
 
 ## Model
 
-`config/models.yaml` is the single source of truth for which model runs and how
-it behaves; `.env` holds only the endpoint and key. Switch providers by changing
-`provider:` — no code changes anywhere else.
+Uses **Qwen3 4B** via Ollama — a 4-billion parameter open-weights model.
+Well under the 20B cap, with published parameter counts for provability.
 
-| provider | endpoint | uses |
+`config/models.yaml` is the single source of truth for model configuration.
+`.env` holds only the endpoint and key.
+
+| Provider | Endpoint | Config key |
 |---|---|---|
-| `gemini` | Google AI Studio, OpenAI-compatible | `base` (current) |
-| `ollama` | your shared local server | `derived` (params baked into a Modelfile) |
-| `hosted` | any other OpenAI-compatible API | `base` |
+| `ollama` | local Ollama server | `ollama_base` |
+| `gemini` | Google AI Studio | `base` |
+| `hosted` | any OpenAI-compatible API | `base` |
+
+## Scaling
+
+Generate larger datasets for testing:
 
 ```bash
-echo "GEMINI_API_KEY=..." >> .env      # https://aistudio.google.com/apikey
-make model-check
+python scripts/generate_dataset.py --rows 1000000 --no-encrypt   # 1M rows
+python scripts/generate_dataset.py --rows 20000000 --format parquet  # 20M rows
 ```
 
-**On the ≤20B rule:** Google publishes no parameter count for Gemini, so that
-claim cannot be demonstrated. Gemma is served from the *same endpoint with the
-same key* and does publish its sizes — setting every role's `base` to
-`gemma-3-4b-it` makes the cap provable with no other change.
-
-## Local vs production scale
-
-Develop against a small local set; the pipeline is built to run at production
-volume unchanged.
-
-```bash
-make data-local     # 200k rows, regenerates in ~1s
-make data-prod      # 20M rows, parquet
-make bench          # measured query latency at whatever is loaded
-```
-
-Measured on 2M rows (M-series laptop, DuckDB):
-
-| query | p50 |
-|---|---|
-| spend by vendor, one month | 34 ms |
-| total tax, 3 months | 13 ms |
-| category breakdown, full table | 45 ms |
-| drill-down evidence, 200 rows | 18 ms |
-| spend by vendor, via rollup | **2.7 ms** |
-
-Load is one-time and chunked: 2M rows in ~28s end to end (generate, parse,
-join, roll up), so 20M is roughly 5 minutes. Narration parsing runs at ~95k
-rows/sec single-threaded and is the bulk of it.
-
-Nothing here scans a table at answer time that a rollup could serve, and the
-enrichment never holds more than one chunk in memory — the first thing that
-breaks when local row counts become production row counts.
+Then reload: `rm data/finance.duckdb && python scripts/load_data.py`
 
 ## Architecture
 
 ```
-question → planner (small LLM) → QuerySpec → validator → compiler → DuckDB
-                                                  ↓            ↓
-                                          refuse/clarify   result + evidence rows
-                                                               ↓
-                                                    narrator (small LLM)
-                                                               ↓
-                                                        numeric guard
+question → nlq_dates (regex) → date range
+         → planner (Qwen3 4B) → QuerySpec JSON
+         → validator (fuzzy match against real data)
+         → compiler → parameterised SQL
+         → DuckDB → DataFrame + evidence rows
+         → narrator (Qwen3 4B) → numeric guard → English answer
+         → JSON response with breakdown, evidence, confidence, anomalies
 ```
 
-The LLM appears exactly twice, and touches no arithmetic in either place.
+The LLM appears exactly twice and touches no arithmetic in either place.
 
-## The contract
+## Key Design Decisions
 
-`app/spec.py` — `QuerySpec` — is the interface between the model half and the
-data half of the system. Both sides can be built and tested independently.
-`POST /ask_spec` runs the whole pipeline from a hand-written spec with no model
-in the loop.
+- **Grounding**: Every number comes from SQL. The model never computes.
+- **Hallucination guard**: `numeric_guard()` verifies every number in the
+  narrator's output exists in the result set.
+- **Sensitive data**: `account_number` shows last 4 digits only; `utr_number`
+  is fully redacted. Masking happens in SQL, never in Python.
+- **Counterparty**: Parsed from free-text narration at load time by
+  `app/enrich.py`. The model never parses descriptions at query time.
+- **Categories**: Derived from narration keywords (TAX, BANK_CHARGES, etc.).
+  No category column exists in the raw data.
+- **Confidence**: Self-consistency sampling + deterministic assessment based
+  on row count, warnings, and data quality.
 
-`schema/semantic_layer.yaml` is the only file that changes when the schema does.
-The real schema is in `schema/DATA_DICTIONARY.md`; open judgement calls it does
-not settle are tracked in `DECISIONS.md`.
+## API Endpoints
 
-## What the data does and does not contain
-
-Three tables: `bank` -> `account` -> `transaction`. There is **no vendor table,
-no category, no chart of accounts, and no reconciliation status column.**
-
-- **Counterparty** is parsed out of the free-text narration at load time by
-  `app/enrich.py`, into a real column. The model never parses text at query time.
-- **"Vendor payouts"** means debit transactions; **receipts** means credits.
-- **Reconciliation state** is a definition we chose, not a field we read. See
-  `DECISIONS.md` #1.
-- `account_number` and `utr_number` are masked in SQL before results leave the
-  database.
+| Endpoint | Method | Description |
+|---|---|---|
+| `/` | GET | Chat UI |
+| `/health` | GET | Status + current date |
+| `/ask` | POST | Natural language question (uses LLM) |
+| `/ask_spec` | POST | Hand-written QuerySpec (no LLM) |
+| `/export` | POST | Download breakdown as CSV/Excel |
+| `/efficiency` | GET | Model usage stats |
 
 ## Status
 
 | Module | State |
 |---|---|
-| `db.py` `dates.py` `compiler.py` `validator.py` | deterministic core, testable now |
-| `api.py` | live, `/ask_spec` works without a model |
-| `planner.py` `narrator.py` | stubs — model integration pending |
-| `ui/` | empty |
+| `db.py` `dates.py` `compiler.py` `validator.py` | ✅ deterministic core |
+| `planner.py` | ✅ LLM-backed with prompt tuning for Qwen3 4B |
+| `narrator.py` | ✅ LLM-backed with numeric guard + template fallback |
+| `api.py` | ✅ all endpoints working |
+| `ui/` | ✅ chat interface with branding, suggestions, export |
+| `evals/` | ✅ 35 golden questions |

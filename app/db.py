@@ -1,4 +1,4 @@
-"""DuckDB connection + the data anchor date. Read-only by construction."""
+"""DuckDB connection + the current date. Read-only by construction."""
 from __future__ import annotations
 import functools, pathlib, datetime
 import duckdb, yaml
@@ -13,13 +13,9 @@ def connect(read_only: bool = True) -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(DB_PATH), read_only=read_only)
 
 
-@functools.lru_cache(maxsize=1)
 def anchor_date() -> datetime.date:
-    """'Today' for the assistant = the latest date present in the data."""
-    _, col = SEMANTIC["anchor"]["source"].split(".")
-    view = SEMANTIC["base_view"]
-    val = connect().execute(f"SELECT MAX({col}) FROM {view}").fetchone()[0]
-    return val.date() if hasattr(val, "date") else val
+    """'Today' for the assistant = the current wall clock date."""
+    return datetime.date.today()
 
 
 def run(sql: str, params: list | None = None):

@@ -2,7 +2,31 @@
 from __future__ import annotations
 from app.validator import numeric_guard
 
-SYSTEM = """You are a finance assistant narrator. You explain query results in plain English.
+
+def inr(value) -> str:
+    """Format a number as Indian-style comma-separated string with ₹ prefix."""
+    v = float(value)
+    if v < 0:
+        return f"-₹{inr(-v)[1:]}"
+    s = f"{v:,.2f}"
+    # Convert international commas to Indian grouping
+    parts = s.split(".")
+    integer = parts[0].replace(",", "")
+    if len(integer) <= 3:
+        grouped = integer
+    else:
+        grouped = integer[-3:]
+        integer = integer[:-3]
+        while integer:
+            grouped = integer[-2:] + "," + grouped
+            integer = integer[:-2]
+    return f"₹{grouped}.{parts[1]}"
+
+def _system() -> str:
+    import datetime
+    today = datetime.date.today().isoformat()
+    return f"""You are a finance assistant narrator. You explain query results in plain English.
+Today's date is {today}.
 
 STRICT RULES:
 1. Use ONLY numbers that appear exactly in the data table below. Never round, estimate, or calculate.
@@ -42,11 +66,11 @@ def narrate(question: str, df, spec, window_desc: str) -> str:
             f"\nResult table:\n{table_str}"
         )
 
-        text = chat("narrator", SYSTEM, user_msg, max_tokens=200)
+        text = chat("narrator", _system(), user_msg, max_tokens=200)
 
         bad = numeric_guard(text, df)
         if bad:
-            text2 = chat("narrator", SYSTEM,
+            text2 = chat("narrator", _system(),
                          f"{user_msg}\n\nYour previous answer contained numbers not in the table: {bad}. "
                          f"Rewrite using ONLY numbers from the table.",
                          max_tokens=200)
@@ -80,3 +104,25 @@ def template(df, spec, window_desc: str) -> str:
         second = df.iloc[1]
         result += f" Followed by {second[dim]} at {second[spec.metric]:,.2f}."
     return result
+
+
+def with_comparison(text: str, comparison, spec) -> str:
+    """Append a comparison sentence to the narration."""
+    if comparison is None:
+        return text
+    if comparison.delta is not None and comparison.previous is not None:
+        direction = "up" if comparison.delta > 0 else "down"
+        pct = f" ({comparison.delta_pct:+.1f}%)" if comparison.delta_pct is not None else ""
+        return (f"{text} Compared to {comparison.window}, "
+                f"that's {direction} by {inr(abs(comparison.delta))}{pct}.")
+    if comparison.rows:
+        return f"{text} Period comparison with {comparison.window} included."
+    return text
+
+
+def with_anomalies(text: str, flags: list) -> str:
+    """Append anomaly callouts to the narration."""
+    if not flags:
+        return text
+    callouts = "; ".join(f.sentence() for f in flags[:3])
+    return f"{text} ⚠️ {callouts}"

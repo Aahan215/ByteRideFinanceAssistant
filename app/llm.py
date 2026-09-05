@@ -19,7 +19,7 @@ TIMEOUT = float(os.getenv("LLM_TIMEOUT", "90"))
 PROVIDER = os.getenv("LLM_PROVIDER", CFG.get("provider", "ollama"))
 # Ollama serves params baked into a derived model; a hosted API takes them per
 # request, so there is nothing to derive and we call the base model directly.
-MODEL_KEY = "derived" if PROVIDER == "ollama" else "base"
+MODEL_KEY = "ollama_base" if PROVIDER == "ollama" else "base"
 
 DEFAULT_BASE_URL = {
     "ollama": "http://localhost:11434/v1",
@@ -53,9 +53,13 @@ USAGE: list[dict] = []   # append-only call log -> efficiency stats for the deck
 
 
 def chat(role: str, system: str, user: str, *, temperature: float | None = None,
-         json_mode: bool = False, max_tokens: int = 800) -> str:
+         json_mode: bool = False, max_tokens: int = 512) -> str:
     cfg = ROLES[role]
     model = cfg.get(MODEL_KEY, cfg["base"])
+    # Qwen3 thinking models waste tokens on reasoning chains.
+    # Prepend /no_think to the system prompt to disable it.
+    if "qwen3" in model:
+        system = "/no_think\n" + system
     payload = {
         "model": model,
         "messages": [{"role": "system", "content": system},
@@ -100,20 +104,63 @@ def chat(role: str, system: str, user: str, *, temperature: float | None = None,
     data = r.json()
     USAGE.append({"role": role, "model": model,
                   "tokens": data.get("usage", {}).get("total_tokens")})
-    return data["choices"][0]["message"]["content"]
+    msg = data["choices"][0]["message"]
+    # qwen3 "thinking" models return reasoning + content; content may be empty
+    # if max_tokens was consumed by reasoning. Fall back to reasoning if needed.
+    content = msg.get("content") or ""
+    if not content.strip() and msg.get("reasoning"):
+        content = msg["reasoning"]
+    return content
+
+
+def _extract_json(raw: str) -> dict:
+    """Extract the first valid JSON object from a string that may contain
+    prose, markdown fences, or multiple objects — all common with small models."""
+    # Try the whole string first
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # Strip markdown fences
+    cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`")
+    try:
+        return json.loads(cleaned)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # Walk character by character to find balanced braces
+    start = raw.find("{")
+    if start == -1:
+        raise ValueError(f"no JSON in model output: {raw[:200]}")
+    depth, i = 0, start
+    in_str = False
+    while i < len(raw):
+        c = raw[i]
+        if c == '"' and (i == 0 or raw[i-1] != '\\'):
+            in_str = not in_str
+        elif not in_str:
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(raw[start:i+1])
+                    except json.JSONDecodeError:
+                        # Try next opening brace
+                        start = raw.find("{", i+1)
+                        if start == -1:
+                            break
+                        depth, i = 0, start
+                        continue
+        i += 1
+    raise ValueError(f"no valid JSON in model output: {raw[:200]}")
 
 
 def chat_json(role: str, system: str, user: str, *, temperature: float | None = None) -> dict:
     """Small models wrap JSON in prose or fences more often than large ones.
     Salvage it rather than failing the query."""
     raw = chat(role, system, user, temperature=temperature, json_mode=True)
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", raw, re.S)
-        if not m:
-            raise ValueError(f"no JSON in model output: {raw[:200]}")
-        return json.loads(m.group(0))
+    return _extract_json(raw)
 
 
 def efficiency_report() -> dict:

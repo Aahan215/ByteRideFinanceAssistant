@@ -3,10 +3,10 @@
 # bank -> account -> transaction. Indian bank narrations, INR, single company.
 
 anchor:
-  # "today" = the latest transaction in the data, NOT the wall clock.
-  # The dataset runs to mid-2026; wall-clock relative dates would return
-  # zero rows for every question.
-  source: transaction.transaction_date
+  # "today" = the current wall clock date.
+  # Relative date phrases like "this month" and "last quarter" resolve
+  # against today's date.
+  source: wall_clock
 
 # The one queryable view. Built at load time in scripts/load_data.py so the
 # joins and the parsed counterparty are already materialised.

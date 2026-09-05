@@ -19,7 +19,7 @@ exactly how much to trust the ranking and why.
 from __future__ import annotations
 from dataclasses import dataclass, field
 
-SMALL_SAMPLE = 20            # below this, "usual" and "top" are not real claims
+SMALL_SAMPLE = 10            # below this, "usual" and "top" are not real claims
 COVERAGE_CONCERN = 0.20      # >20% unattributed spend materially skews a ranking
 
 
@@ -68,7 +68,7 @@ def assess(*, spec, row_count: int | None = None, excluded_rows: int = 0,
     if comparison_mismatch:
         a.downgrade("medium", "the two periods compared are different lengths")
 
-    # Several independent concerns is qualitatively worse than one.
-    if a.level == "medium" and len(a.reasons) >= 2:
+    # Escalate only when 3+ independent concerns stack up.
+    if a.level == "medium" and len(a.reasons) >= 3:
         a.level = "low"
     return a

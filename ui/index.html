@@ -3,121 +3,233 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Finance Assistant</title>
+<title>ByteRide Finance Assistant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#f6f7f9; --panel:#fff; --ink:#15181d; --muted:#6b7280; --line:#e4e7ec;
-    --accent:#1f6feb; --accent-soft:#eaf1fe; --warn:#8a5a00; --warn-bg:#fff7e6;
-    --info:#0b5f57; --info-bg:#e8f6f4; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+    --bg:#f0f2f5; --panel:#fff; --ink:#1a1d23; --muted:#6b7280; --line:#e2e5ea;
+    --accent:#2563eb; --accent-hover:#1d4ed8; --accent-soft:#eff4ff;
+    --warn:#92400e; --warn-bg:#fffbeb; --info:#065f46; --info-bg:#ecfdf5;
+    --error:#991b1b; --error-bg:#fef2f2;
+    --gradient:linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+    --radius:12px; --shadow:0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
+    --shadow-lg:0 4px 12px rgba(0,0,0,.1), 0 2px 4px rgba(0,0,0,.06);
   }
   @media (prefers-color-scheme:dark){
-    :root{ --bg:#0f1115; --panel:#171a21; --ink:#e8eaed; --muted:#98a2b3; --line:#262b35;
-           --accent:#6aa5ff; --accent-soft:#16263f; --warn:#e0b25a; --warn-bg:#2a2110;
-           --info:#7fd6c9; --info-bg:#10241f; }
+    :root{ --bg:#0c0e14; --panel:#161922; --ink:#e4e7ec; --muted:#8b95a5; --line:#252a36;
+           --accent:#6393f5; --accent-hover:#7da8ff; --accent-soft:#1a2744;
+           --warn:#fbbf24; --warn-bg:#2a2210; --info:#6ee7b7; --info-bg:#0f2920;
+           --error:#fca5a5; --error-bg:#2a1515;
+           --shadow:0 1px 3px rgba(0,0,0,.3); --shadow-lg:0 4px 12px rgba(0,0,0,.4); }
   }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);
-       font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-  header{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);
-         padding:14px 20px;display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
-  header h1{font-size:16px;margin:0;font-weight:650;letter-spacing:-.01em}
-  .anchor{font-size:12.5px;color:var(--muted)}
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{background:var(--bg);color:var(--ink);
+       font:15px/1.6 'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+
+  /* --- Header --- */
+  header{position:sticky;top:0;z-index:10;background:var(--panel);
+         border-bottom:1px solid var(--line);padding:0 24px;
+         display:flex;align-items:center;height:60px;gap:16px;
+         box-shadow:var(--shadow)}
+  .logo{display:flex;align-items:center;gap:10px}
+  .logo-icon{width:32px;height:32px;border-radius:8px;background:var(--gradient);
+             display:flex;align-items:center;justify-content:center;
+             color:#fff;font-weight:700;font-size:14px}
+  .logo h1{font-size:17px;font-weight:700;letter-spacing:-.02em}
+  .logo h1 span{background:var(--gradient);-webkit-background-clip:text;
+                -webkit-text-fill-color:transparent}
+  .anchor{font-size:12px;color:var(--muted);margin-left:auto;
+          display:flex;align-items:center;gap:6px}
+  .anchor .dot{width:7px;height:7px;border-radius:50%;background:#22c55e;
+               box-shadow:0 0 6px #22c55e80}
   .anchor b{color:var(--ink);font-weight:600}
-  main{max-width:860px;margin:0 auto;padding:22px 20px 140px}
-  .msg{margin-bottom:22px}
+
+  /* --- Main --- */
+  main{max-width:880px;margin:0 auto;padding:24px 20px 160px;min-height:calc(100vh - 60px)}
+
+  /* --- Welcome --- */
+  .welcome{text-align:center;padding:60px 20px 40px}
+  .welcome-icon{width:72px;height:72px;border-radius:20px;background:var(--gradient);
+                display:inline-flex;align-items:center;justify-content:center;
+                margin-bottom:20px;box-shadow:0 8px 24px rgba(37,99,235,.25)}
+  .welcome-icon svg{width:36px;height:36px;color:#fff}
+  .welcome h2{font-size:24px;font-weight:700;margin-bottom:8px;letter-spacing:-.02em}
+  .welcome p{color:var(--muted);font-size:15px;max-width:480px;margin:0 auto 32px}
+  .welcome-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+                gap:10px;max-width:700px;margin:0 auto}
+  .welcome-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+                padding:14px 16px;text-align:left;cursor:pointer;transition:all .15s;
+                display:flex;align-items:flex-start;gap:12px}
+  .welcome-card:hover{border-color:var(--accent);box-shadow:var(--shadow-lg);transform:translateY(-1px)}
+  .welcome-card .wc-icon{width:36px;height:36px;border-radius:8px;background:var(--accent-soft);
+                         display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .welcome-card .wc-icon svg{width:18px;height:18px;color:var(--accent)}
+  .welcome-card .wc-text{font-size:13.5px;color:var(--ink);line-height:1.4}
+  .welcome-card .wc-label{font-size:11px;color:var(--muted);margin-top:2px}
+
+  /* --- Messages --- */
+  .msg{margin-bottom:20px;animation:fadeUp .3s ease}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   .you{display:flex;justify-content:flex-end}
-  .you span{background:var(--accent);color:#fff;padding:9px 14px;border-radius:16px 16px 4px 16px;
-            max-width:75%}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
-  .answer{font-size:15.5px}
-  .meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
-  .chip{font-size:11.5px;padding:3px 9px;border-radius:20px;border:1px solid var(--line);
-        color:var(--muted);background:transparent}
+  .you span{background:var(--accent);color:#fff;padding:10px 16px;border-radius:18px 18px 4px 18px;
+            max-width:75%;font-size:14.5px;box-shadow:var(--shadow)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+        padding:18px 20px;box-shadow:var(--shadow)}
+  .answer{font-size:15px;line-height:1.65}
+  .meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}
+  .chip{font-size:11px;padding:4px 10px;border-radius:20px;font-weight:500;
+        border:1px solid var(--line);color:var(--muted);background:transparent}
   .chip.high{color:var(--info);background:var(--info-bg);border-color:transparent}
-  .chip.medium,.chip.low{color:var(--warn);background:var(--warn-bg);border-color:transparent}
-  .note{margin-top:12px;padding:9px 12px;border-radius:8px;font-size:13px;
-        background:var(--warn-bg);color:var(--warn)}
-  .flag{margin-top:10px;padding:9px 12px;border-radius:8px;font-size:13px;
+  .chip.medium{color:var(--warn);background:var(--warn-bg);border-color:transparent}
+  .chip.low{color:var(--error);background:var(--error-bg);border-color:transparent}
+  .note{margin-top:12px;padding:10px 14px;border-radius:8px;font-size:13px;
+        background:var(--warn-bg);color:var(--warn);border-left:3px solid var(--warn)}
+  .flag{margin-top:10px;padding:10px 14px;border-radius:8px;font-size:13px;
         background:var(--accent-soft);color:var(--ink);border-left:3px solid var(--accent)}
   .flag b{font-weight:650}
-  .why{margin-top:8px;font-size:12.5px;color:var(--muted)}
+  .why{margin-top:8px;font-size:12px;color:var(--muted);padding-left:16px}
   .why li{margin:2px 0}
   .refusal .answer{color:var(--info)}
   .refusal{border-left:3px solid var(--info)}
-  table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13.5px}
-  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
-  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em}
+
+  /* --- Tables --- */
+  table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;
+     letter-spacing:.04em;background:var(--bg)}
   td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
-  .pos{color:#12805c} .neg{color:#c0392b}
-  .scroll{overflow-x:auto}
-  details{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
-  summary{cursor:pointer;font-size:13px;color:var(--accent);font-weight:550;list-style:none}
+  .pos{color:#059669} .neg{color:#dc2626}
+  .scroll{overflow-x:auto;border-radius:8px;border:1px solid var(--line);margin-top:14px}
+  .scroll table{margin-top:0}
+  .scroll th:first-child,.scroll td:first-child{padding-left:14px}
+
+  /* --- Details --- */
+  details{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+  summary{cursor:pointer;font-size:13px;color:var(--accent);font-weight:600;
+          list-style:none;display:flex;align-items:center;gap:6px}
   summary::-webkit-details-marker{display:none}
-  summary::before{content:"▸ ";font-size:11px}
-  details[open] summary::before{content:"▾ "}
-  pre{font:12.5px/1.5 var(--mono);background:var(--bg);border:1px solid var(--line);
-      border-radius:8px;padding:11px;overflow-x:auto;margin:10px 0 0}
+  summary svg{width:14px;height:14px;transition:transform .2s}
+  details[open] summary svg{transform:rotate(90deg)}
+  pre{font:12px/1.6 var(--mono);background:var(--bg);border:1px solid var(--line);
+      border-radius:8px;padding:12px;overflow-x:auto;margin:10px 0 0}
+
+  /* --- Actions --- */
   .actions{margin-top:14px;display:flex;gap:8px}
-  button{font:inherit;font-size:13px;padding:6px 13px;border-radius:8px;cursor:pointer;
-         border:1px solid var(--line);background:var(--panel);color:var(--ink)}
-  button:hover{border-color:var(--accent);color:var(--accent)}
+  button{font:inherit;font-size:13px;padding:7px 14px;border-radius:8px;cursor:pointer;
+         border:1px solid var(--line);background:var(--panel);color:var(--ink);
+         font-weight:500;transition:all .15s}
+  button:hover{border-color:var(--accent);color:var(--accent);box-shadow:var(--shadow)}
+
+  /* --- Loading --- */
+  .thinking{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:14px}
+  .dot-pulse{display:flex;gap:4px;align-items:center}
+  .dot-pulse span{width:8px;height:8px;border-radius:50%;background:var(--accent);opacity:.3;
+                  animation:pulse 1.4s infinite ease-in-out}
+  .dot-pulse span:nth-child(2){animation-delay:.2s}
+  .dot-pulse span:nth-child(3){animation-delay:.4s}
+  @keyframes pulse{0%,80%,100%{opacity:.3;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
+
+  /* --- Footer --- */
   footer{position:fixed;bottom:0;left:0;right:0;background:var(--panel);
-         border-top:1px solid var(--line);padding:14px 20px}
-  .bar{max-width:860px;margin:0 auto;display:flex;gap:10px}
-  #q{flex:1;font:inherit;padding:11px 14px;border:1px solid var(--line);border-radius:10px;
-     background:var(--bg);color:var(--ink)}
+         border-top:1px solid var(--line);padding:12px 20px;box-shadow:0 -2px 8px rgba(0,0,0,.04)}
+  .bar{max-width:880px;margin:0 auto;display:flex;gap:10px;align-items:center}
+  #q{flex:1;font:inherit;font-size:15px;padding:12px 16px;border:2px solid var(--line);
+     border-radius:12px;background:var(--bg);color:var(--ink);transition:border-color .15s}
   #q:focus{outline:none;border-color:var(--accent)}
-  #send{background:var(--accent);color:#fff;border-color:var(--accent);padding:11px 20px;font-weight:600}
-  .suggest{max-width:860px;margin:0 auto 10px;display:flex;gap:7px;flex-wrap:wrap}
-  .suggest button{font-size:12.5px;padding:5px 11px;color:var(--muted)}
-  .thinking{color:var(--muted);font-style:italic}
+  #q::placeholder{color:var(--muted)}
+  #send{background:var(--accent);color:#fff;border:none;padding:12px 22px;font-weight:600;
+        font-size:15px;border-radius:12px;transition:background .15s;display:flex;align-items:center;gap:6px}
+  #send:hover{background:var(--accent-hover)}
+  #send svg{width:18px;height:18px}
+  #send:disabled{opacity:.5;cursor:not-allowed}
+  .footer-hint{text-align:center;font-size:11px;color:var(--muted);margin-top:6px;
+               max-width:880px;margin-left:auto;margin-right:auto}
 </style>
 </head>
 <body>
 <header>
-  <h1>Finance Assistant</h1>
-  <span class="anchor" id="anchor">connecting…</span>
+  <div class="logo">
+    <div class="logo-icon">BR</div>
+    <h1><span>ByteRide</span> Finance Assistant</h1>
+  </div>
+  <span class="anchor" id="anchor">
+    <span class="dot"></span> connecting…
+  </span>
 </header>
 
-<main id="feed"></main>
+<main id="feed">
+  <div class="welcome" id="welcome">
+    <div class="welcome-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/>
+      </svg>
+    </div>
+    <h2>Ask anything about your finances</h2>
+    <p>Get instant, accurate answers grounded in your real transaction data. Every number comes from your records — never invented.</p>
+    <div class="welcome-grid" id="suggestions"></div>
+  </div>
+</main>
 
 <footer>
-  <div class="suggest" id="suggest"></div>
   <div class="bar">
-    <input id="q" placeholder="Ask about your spending…" autocomplete="off">
-    <button id="send">Ask</button>
+    <input id="q" placeholder="Ask about your spending, transactions, vendors…" autocomplete="off">
+    <button id="send">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+      </svg>
+      Ask
+    </button>
   </div>
+  <div class="footer-hint">Powered by grounded AI — every answer is backed by real data, never hallucinated</div>
 </footer>
 
 <script>
 const SESSION = Math.random().toString(36).slice(2);
 const feed = document.getElementById('feed');
+const welcome = document.getElementById('welcome');
 const inr = new Intl.NumberFormat('en-IN', {style:'currency', currency:'INR', maximumFractionDigits:0});
 const AMOUNT = /amount|value|previous|delta|balance/i;
 
 const SUGGESTIONS = [
-  "Where did I spend the most this month?",
-  "Total tax I paid in the last 3 months",
-  "Break my spending down by category",
-  "How does that compare to the month before?",
-  "Which transactions are unreconciled?",
+  {icon:'trending', text:'Where did I spend the most this month?', label:'Top spending'},
+  {icon:'receipt', text:'Total tax I paid in the last 3 months', label:'Tax summary'},
+  {icon:'grid', text:'Break my spending down by category', label:'Category breakdown'},
+  {icon:'compare', text:'How does that compare to the month before?', label:'Period comparison'},
+  {icon:'search', text:'Show me all HDFC transactions', label:'Bank filter'},
+  {icon:'alert', text:'Which transactions are above 50000?', label:'Large transactions'},
 ];
 
-// --- the assistant's "today" comes from the data, not the clock ------------
+const ICONS = {
+  trending:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>',
+  receipt:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
+  grid:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>',
+  compare:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
+  search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+  alert:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+};
+
+// --- Anchor date ---
 fetch('/health').then(r => r.json()).then(h => {
   const d = new Date(h.anchor_date + 'T00:00:00');
   const nice = d.toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'});
   const month = d.toLocaleDateString('en-IN', {month:'long', year:'numeric'});
   document.getElementById('anchor').innerHTML =
-    `Data through <b>${nice}</b> — “this month” means ${month}`;
-}).catch(() => document.getElementById('anchor').textContent = 'backend unreachable');
+    `<span class="dot"></span> Live — <b>${nice}</b> — "this month" = ${month}`;
+}).catch(() => {
+  const a = document.getElementById('anchor');
+  a.innerHTML = '<span class="dot" style="background:#ef4444;box-shadow:0 0 6px #ef444480"></span> Backend unreachable';
+});
 
-const sg = document.getElementById('suggest');
+// --- Suggestions ---
+const sg = document.getElementById('suggestions');
 SUGGESTIONS.forEach(s => {
-  const b = document.createElement('button');
-  b.textContent = s;
-  b.onclick = () => ask(s);
-  sg.appendChild(b);
+  const card = document.createElement('div');
+  card.className = 'welcome-card';
+  card.innerHTML = `<div class="wc-icon">${ICONS[s.icon]}</div><div><div class="wc-text">${esc(s.text)}</div><div class="wc-label">${esc(s.label)}</div></div>`;
+  card.onclick = () => ask(s.text);
+  sg.appendChild(card);
 });
 
 function el(html){ const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstChild; }
@@ -139,7 +251,7 @@ function table(rows, limit = 12){
     const cls = num ? (c === 'delta' && typeof r[c] === 'number' ? (r[c] >= 0 ? 'num pos' : 'num neg') : 'num') : '';
     return `<td class="${cls}">${fmt(c, r[c])}</td>`;
   }).join('') + '</tr>').join('');
-  const more = rows.length > limit ? `<div class="chip" style="margin-top:8px">+${rows.length - limit} more rows</div>` : '';
+  const more = rows.length > limit ? `<div class="chip" style="margin-top:10px">+${rows.length - limit} more rows</div>` : '';
   return `<div class="scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>${more}`;
 }
 
@@ -153,36 +265,31 @@ function render(d){
   if (d.window) meta.appendChild(el(`<span class="chip">${esc(d.window)}</span>`));
   if (!refused) meta.appendChild(el(`<span class="chip ${esc(d.confidence)}">confidence: ${esc(d.confidence)}</span>`));
   if (d.anomalies && d.anomalies.length)
-    meta.appendChild(el(`<span class="chip medium">${d.anomalies.length} unusual amount${d.anomalies.length > 1 ? 's' : ''}</span>`));
+    meta.appendChild(el(`<span class="chip low">${d.anomalies.length} unusual amount${d.anomalies.length > 1 ? 's' : ''}</span>`));
   if (refused) meta.appendChild(el(`<span class="chip">not answerable from this data</span>`));
   card.appendChild(meta);
 
-  // A bare badge tells the user nothing; say WHY confidence is not high.
   if (d.confidence_reasons && d.confidence_reasons.length){
     card.appendChild(el(`<div class="why"><ul>${
       d.confidence_reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul></div>`));
   }
 
-  // Anomaly callouts, alongside the original answer rather than as a
-  // separate question -- which is what the brief asks for.
   (d.anomalies || []).forEach(a =>
-    card.appendChild(el(`<div class="flag"><b>Unusual:</b> ${esc(a)}</div>`)));
+    card.appendChild(el(`<div class="flag"><b>⚠ Unusual:</b> ${esc(a)}</div>`)));
 
-  // Warnings carry real substance -- e.g. spend excluded from a ranking.
-  (d.warnings || []).forEach(w => card.appendChild(el(`<div class="note">${esc(w)}</div>`)));
+  (d.warnings || []).forEach(w => card.appendChild(el(`<div class="note">⚡ ${esc(w)}</div>`)));
 
   if (d.comparison && d.comparison.rows && d.comparison.rows.length)
     card.appendChild(el(table(d.comparison.rows)));
   else if (d.breakdown && d.breakdown.length > (d.breakdown.length === 1 && Object.keys(d.breakdown[0]).length === 1 ? 1 : 0))
     card.appendChild(el(table(d.breakdown)));
 
-  // The grounding panel: the exact query, and the rows behind the number.
   if (d.sql){
     const det = el('<details></details>');
-    det.appendChild(el('<summary>Show the query and the source records</summary>'));
+    det.appendChild(el(`<summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg> Show query &amp; source records</summary>`));
     det.appendChild(el(`<pre>${esc(d.sql)}</pre>`));
     if (d.evidence && d.evidence.length){
-      det.appendChild(el(`<div class="chip" style="margin-top:12px">${d.evidence.length} source records (account numbers and UTRs masked)</div>`));
+      det.appendChild(el(`<div class="chip" style="margin-top:12px">${d.evidence.length} source records (sensitive fields masked)</div>`));
       det.appendChild(el(table(d.evidence, 8)));
     }
     card.appendChild(det);
@@ -190,9 +297,9 @@ function render(d){
 
   if (!refused && d.spec){
     const actions = el('<div class="actions"></div>');
-    const csv = el('<button>Export CSV</button>');
+    const csv = el('<button>📄 Export CSV</button>');
     csv.onclick = () => download(d.spec, 'csv');
-    const xls = el('<button>Export Excel</button>');
+    const xls = el('<button>📊 Export Excel</button>');
     xls.onclick = () => download(d.spec, 'xlsx');
     actions.appendChild(csv); actions.appendChild(xls);
     card.appendChild(actions);
@@ -211,13 +318,22 @@ async function download(spec, fmt){
   URL.revokeObjectURL(a.href);
 }
 
+let sending = false;
 async function ask(question){
+  if (sending) return;
+  sending = true;
+  document.getElementById('send').disabled = true;
+
+  // Hide welcome on first question
+  if (welcome.style.display !== 'none') welcome.style.display = 'none';
+
   const q = document.getElementById('q');
   q.value = '';
   feed.appendChild(el(`<div class="msg you"><span>${esc(question)}</span></div>`));
-  const pending = el('<div class="msg"><div class="card thinking">Querying your transactions…</div></div>');
+
+  const pending = el(`<div class="msg"><div class="card thinking"><div class="dot-pulse"><span></span><span></span><span></span></div> Analyzing your transactions…</div></div>`);
   feed.appendChild(pending);
-  window.scrollTo(0, document.body.scrollHeight);
+  window.scrollTo({top: document.body.scrollHeight, behavior:'smooth'});
 
   try {
     const r = await fetch('/ask', {
@@ -230,7 +346,10 @@ async function ask(question){
   } catch (e) {
     pending.replaceWith(el(`<div class="msg"><div class="card refusal"><div class="answer">Could not reach the backend: ${esc(e.message)}</div></div></div>`));
   }
-  window.scrollTo(0, document.body.scrollHeight);
+  sending = false;
+  document.getElementById('send').disabled = false;
+  window.scrollTo({top: document.body.scrollHeight, behavior:'smooth'});
+  q.focus();
 }
 
 document.getElementById('send').onclick = () => {
@@ -238,8 +357,9 @@ document.getElementById('send').onclick = () => {
   if (v) ask(v);
 };
 document.getElementById('q').addEventListener('keydown', e => {
-  if (e.key === 'Enter') document.getElementById('send').click();
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('send').click(); }
 });
+document.getElementById('q').focus();
 </script>
 </body>
 </html>
