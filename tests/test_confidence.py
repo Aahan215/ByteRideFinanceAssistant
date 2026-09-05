@@ -16,9 +16,19 @@ def test_a_tiny_sample_is_downgraded_with_a_reason():
     assert a.level == "medium" and "only 3 transactions" in a.reasons[0]
 
 
-def test_poor_attribution_downgrades_a_ranking():
-    a = assess(spec=spec(group_by=["counterparty"]), row_count=700, excluded_rows=300)
+def test_unparseable_narrations_downgrade_a_ranking():
+    a = assess(spec=spec(group_by=["counterparty"]), row_count=700,
+               excluded_rows=300, unattributed_rows=300)
     assert a.level == "medium" and "30%" in a.reasons[0]
+
+
+def test_rows_with_no_payee_at_all_do_not_downgrade():
+    """Tax, bank charges and cash have no counterparty by definition. A vendor
+    ranking that excludes them is CORRECT, not incomplete -- counting them was
+    marking almost every vendor question medium confidence."""
+    a = assess(spec=spec(group_by=["counterparty"]), row_count=700,
+               excluded_rows=444_423, unattributed_rows=0)
+    assert a.level == "high" and not a.reasons
 
 
 def test_model_disagreeing_with_itself_is_the_strongest_signal():
@@ -27,7 +37,8 @@ def test_model_disagreeing_with_itself_is_the_strongest_signal():
 
 
 def test_two_independent_concerns_compound_to_low():
-    a = assess(spec=spec(group_by=["counterparty"]), row_count=700, excluded_rows=300,
+    a = assess(spec=spec(group_by=["counterparty"]), row_count=700,
+               excluded_rows=300, unattributed_rows=300,
                warnings=["Interpreted vendor 'Zomto' as 'ZOMATO HYPERPURE'."])
     assert a.level == "low" and len(a.reasons) == 2
 

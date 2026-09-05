@@ -110,8 +110,15 @@ def compile_null_group_sql(spec: QuerySpec, anchor, scope=None) -> tuple[str, li
         where.append(f"{date_col} >= ?"); params.append(start)
     if end:
         where.append(f"{date_col} < ?"); params.append(end)
-    return (f"SELECT SUM({amt_col}) AS excluded, COUNT(*) AS rows FROM {view} "
-            f"WHERE {' AND '.join(where)}"), params
+    # Split by cause. A vendor ranking that excludes tax and bank charges is
+    # CORRECT -- those have no payee. Only a narration we failed to parse is a
+    # real gap, and only that should count against confidence.
+    unattributed = ("SUM(CASE WHEN parsed_by IN ('unparsed', 'empty') "
+                    f"THEN {amt_col} ELSE 0 END)")
+    unattributed_n = "SUM(CASE WHEN parsed_by IN ('unparsed', 'empty') THEN 1 ELSE 0 END)"
+    return (f"SELECT SUM({amt_col}) AS excluded, COUNT(*) AS rows, "
+            f"{unattributed} AS unattributed, {unattributed_n} AS unattributed_rows "
+            f"FROM {view} WHERE {' AND '.join(where)}"), params
 
 
 def compile_count_sql(spec: QuerySpec, anchor, scope=None) -> tuple[str, list]:

@@ -36,6 +36,7 @@ class Assessment:
 
 
 def assess(*, spec, row_count: int | None = None, excluded_rows: int = 0,
+           unattributed_rows: int = 0,
            warnings: list[str] | None = None, planner_confidence: str | None = None,
            comparison_mismatch: bool = False) -> Assessment:
     a = Assessment()
@@ -58,12 +59,16 @@ def assess(*, spec, row_count: int | None = None, excluded_rows: int = 0,
                                   f"{'s' if row_count != 1 else ''}")
 
     if spec.group_by and row_count:
-        share = excluded_rows / (row_count + excluded_rows)
+        # Rows that legitimately have no value for this dimension (tax has no
+        # payee) are correctly excluded, not a gap. Measuring them as one
+        # flagged nearly every vendor question as medium confidence for a
+        # ranking that was in fact complete.
+        share = unattributed_rows / (row_count + unattributed_rows)
         if share > COVERAGE_CONCERN:
             a.downgrade("medium",
-                        f"{share:.0%} of matching transactions have no "
-                        f"{spec.group_by[0]} we could identify, so this ranking "
-                        f"is incomplete")
+                        f"{share:.0%} of matching transactions have a "
+                        f"{spec.group_by[0]} we could not extract from the "
+                        f"narration, so this ranking is incomplete")
 
     if comparison_mismatch:
         a.downgrade("medium", "the two periods compared are different lengths")

@@ -104,17 +104,27 @@ def answer_spec(spec: QuerySpec, question: str = "", scope=None) -> Answer:
     text = narrator.narrate(question, df, spec, window)
 
     warnings = list(v.warnings)
-    excluded_rows = 0
+    excluded_rows = unattributed_rows = 0
     nulls = compile_null_group_sql(spec, anchor_date(), scope=scope)
     if nulls:
         nrow = run(*nulls)
         excluded, nrows = nrow.iloc[0]["excluded"], int(nrow.iloc[0]["rows"])
+        unattributed = float(nrow.iloc[0].get("unattributed") or 0)
+        unattributed_rows = int(nrow.iloc[0].get("unattributed_rows") or 0)
         excluded_rows = nrows
         if nrows:
-            warnings.append(
-                f"{narrator.inr(excluded)} across {nrows:,} transactions has no "
-                f"{spec.group_by[0]} we could identify (tax, bank charges and "
-                f"cash have no payee) and is not in this breakdown.")
+            no_payee_n = nrows - unattributed_rows
+            if no_payee_n:
+                warnings.append(
+                    f"{narrator.inr(excluded - unattributed)} across {no_payee_n:,} "
+                    f"transactions has no {spec.group_by[0]} at all (tax, bank "
+                    f"charges and cash have no payee), so it is correctly outside "
+                    f"a {spec.group_by[0]} breakdown.")
+            if unattributed_rows:
+                warnings.append(
+                    f"{narrator.inr(unattributed)} across {unattributed_rows:,} "
+                    f"transactions has a {spec.group_by[0]} we could not extract "
+                    f"from the narration, so it is missing from this breakdown.")
 
     comparison = None
     before = len(warnings)
@@ -139,6 +149,7 @@ def answer_spec(spec: QuerySpec, question: str = "", scope=None) -> Answer:
 
     row_count = int(run(*compile_count_sql(spec, anchor_date(), scope=scope)).iloc[0]["n"])
     a = confidence.assess(spec=spec, row_count=row_count, excluded_rows=excluded_rows,
+                          unattributed_rows=unattributed_rows,
                           warnings=warnings, comparison_mismatch=mismatch)
 
     return Answer(answer=text, sql=sql, window=window,
