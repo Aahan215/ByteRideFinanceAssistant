@@ -43,6 +43,16 @@ def _suggest(question: str, spec: QuerySpec, candidates: list[str]) -> list[str]
     return out
 
 
+def _num(value, default=0.0) -> float:
+    """NaN is TRUTHY, so `value or 0` returns NaN and int(NaN) raises.
+
+    An aggregate over zero rows comes back as NaN, which is exactly the case
+    that reaches here -- a question whose breakdown excludes nothing.
+    """
+    import pandas as pd
+    return default if value is None or pd.isna(value) else float(value)
+
+
 def _clean(df) -> list[dict]:
     """pandas turns SQL NULL into NaN, which serialises as the string 'nan' and
     reaches the user as a fake value. Put real nulls back."""
@@ -108,9 +118,10 @@ def answer_spec(spec: QuerySpec, question: str = "", scope=None) -> Answer:
     nulls = compile_null_group_sql(spec, anchor_date(), scope=scope)
     if nulls:
         nrow = run(*nulls)
-        excluded, nrows = nrow.iloc[0]["excluded"], int(nrow.iloc[0]["rows"])
-        unattributed = float(nrow.iloc[0].get("unattributed") or 0)
-        unattributed_rows = int(nrow.iloc[0].get("unattributed_rows") or 0)
+        excluded = _num(nrow.iloc[0]["excluded"])
+        nrows = int(_num(nrow.iloc[0]["rows"]))
+        unattributed = _num(nrow.iloc[0].get("unattributed"))
+        unattributed_rows = int(_num(nrow.iloc[0].get("unattributed_rows")))
         excluded_rows = nrows
         if nrows:
             no_payee_n = nrows - unattributed_rows
