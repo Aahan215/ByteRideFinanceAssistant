@@ -142,6 +142,11 @@ def compile_anomaly_sql(spec: QuerySpec, anchor, limit: int = 3):
     if end:
         where.append(f"{date_col} < ?"); params.append(end)
     where.append("anomaly_score IS NOT NULL")
+    from app.anomaly import HIGH_SIDE_ONLY
+    if HIGH_SIDE_ONLY:
+        # the brief asks for unusually LARGE payouts; filter in SQL rather than
+        # fetching rows only to discard them
+        where.append("transaction_amount > typical_amount")
     sql = (f"SELECT counterparty, transaction_amount, transaction_date, "
            f"typical_amount, history_n AS n, anomaly_score AS score FROM {view} "
            f"WHERE {' AND '.join(where)} ORDER BY anomaly_score DESC LIMIT {limit * 4}")

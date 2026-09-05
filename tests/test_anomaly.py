@@ -47,3 +47,55 @@ def test_one_callout_per_vendor():
     })
     flags = from_scan(df)
     assert [f.counterparty for f in flags] == ["ACME", "BETA"]
+
+
+def _flag(amount, typical, direction, n=500):
+    from app.anomaly import Flag
+    return Flag("ACME TRADERS", amount, typical, 9.0, direction, n)
+
+
+def test_a_large_outlier_reads_as_a_multiple():
+    s = _flag(1_200_000, 20_000, "high").sentence()
+    assert "60x the usual" in s and "₹12,00,000" in s
+
+
+def test_a_small_outlier_is_never_described_as_0x():
+    """"₹100 is 0.0x the usual ₹9,553" is not a sentence anyone can act on."""
+    s = _flag(100, 9553, "low").sentence()
+    assert "0.0x" not in s and "96x smaller" in s
+
+
+def test_callout_uses_the_same_currency_format_as_the_rest_of_the_app():
+    from app.narrator import inr
+    s = _flag(4_224_932, 11_897, "high").sentence()
+    assert inr(4_224_932) in s          # en-IN grouping, not 4,224,932
+
+
+def test_low_outliers_are_suppressed_by_default():
+    """The brief asks for unusually LARGE payouts; small ones dilute the callout."""
+    import pandas as pd
+    from app.anomaly import from_scan
+    df = pd.DataFrame({
+        "counterparty": ["SMALL", "BIG"],
+        "transaction_amount": [100.0, 900_000.0],
+        "transaction_date": [None, None],
+        "typical_amount": [9553.0, 20_000.0],
+        "n": [500, 500], "score": [9.5, 9.0],
+    })
+    assert [f.counterparty for f in from_scan(df)] == ["BIG"]
+    assert len(from_scan(df, high_only=False)) == 2
+
+
+def test_a_statistically_odd_but_small_deviation_is_not_called_out():
+    """A robust score alone ranked "3x the usual rent" above a 357x merchant
+    payment. "Unusually large" should also look large to the reader."""
+    import pandas as pd
+    from app.anomaly import from_scan
+    df = pd.DataFrame({
+        "counterparty": ["RENT DEEPA", "MALABAR GOLD"],
+        "transaction_amount": [34_495.0, 2_863_659.0],
+        "transaction_date": [None, None],
+        "typical_amount": [11_125.0, 8_011.0],       # 3.1x and 357x
+        "n": [153, 404], "score": [11.0, 9.0],       # rent scores HIGHER
+    })
+    assert [f.counterparty for f in from_scan(df)] == ["MALABAR GOLD"]
