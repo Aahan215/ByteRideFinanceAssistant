@@ -51,7 +51,7 @@ hosted_options:
 # to send them.
 roles:
   router:
-    base: gemini-2.5-flash-lite
+    base: gemini-3.5-flash-lite
     ollama_base: qwen3:0.6b
     derived: fin-router:v1
     temperature: 0
@@ -61,15 +61,15 @@ roles:
                              # explicitly or long prompts behave differently
                              # on different hosts.
   planner:
-    base: gemini-2.5-flash        # swap to gemma-3-4b-it for a published 4B
-    ollama_base: qwen3:4b
+    base: gemini-3.5-flash-lite   # pinned, not -latest: an alias shifts
+    ollama_base: qwen3:4b         # under you and eval numbers stop matching
     derived: fin-planner:v1
     temperature: 0
     top_p: 1.0
     seed: 42
     num_ctx: 8192            # the QuerySpec schema + few-shots are long
   narrator:
-    base: gemini-2.5-flash-lite
+    base: gemini-3.5-flash-lite
     ollama_base: qwen3:4b
     derived: fin-narrator:v1
     temperature: 0.2         # slight variation reads better in prose;
@@ -77,7 +77,7 @@ roles:
     seed: 42
     num_ctx: 4096
   escalate:
-    base: gemini-2.5-flash
+    base: gemini-3.6-flash   # a genuinely larger model, so escalating means something
     ollama_base: qwen3:8b    # MUST differ from the planner -- escalating to the
                              # same model does nothing, and the escalation rate
                              # is the evidence behind the efficiency claim.
@@ -91,5 +91,7 @@ roles:
 # Self-consistency sampling deliberately overrides temperature at call time.
 # This is the ONE place non-zero sampling is intentional.
 confidence:
-  samples: 3
+  # 3 samples triples the call count, and free tiers throttle well before an
+  # eval run finishes. Keep 1 while iterating; raise to 3 for the final number.
+  samples: 1
   temperature: 0.7

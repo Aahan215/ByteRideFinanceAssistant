@@ -27,7 +27,9 @@ class DateRange(BaseModel):
 
 
 class Filters(BaseModel):
-    counterparty: Optional[str] = None      # parsed vendor/merchant name
+    # A list after validation: one merchant recorded under several
+    # branch-suffixed names ("X" and "X ANDHERI WEST").
+    counterparty: Optional[str | list[str]] = None
     category: Optional[str] = None          # TAX / BANK_CHARGES / TRANSFER / ...
     channel: Optional[str] = None           # UPI / IMPS / NEFT / FT / CHEQUE / CHARGES
     transaction_type: Optional[Literal["credit", "debit"]] = None

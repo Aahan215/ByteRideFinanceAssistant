@@ -29,6 +29,71 @@ def _known_values(dim: str) -> list[str]:
     return [r[0] for r in rows.values]
 
 
+def _family(names: list[str]) -> list[str] | None:
+    """True when every candidate is the shortest one plus extra words -- i.e.
+    one merchant recorded with branch/location suffixes, not several merchants.
+    """
+    from app.enrich import normalise
+    if len(names) < 2:
+        return None
+    norm = {n: normalise(n).split() for n in names}
+    base = min(norm.values(), key=len)
+    if all(toks[:len(base)] == base for toks in norm.values()):
+        return sorted(names)
+    return None
+
+
+def resolve_counterparty(value: str, known: list[str]
+                         ) -> tuple[str | list[str] | None, list[str], str]:
+    """Resolve what the user typed to a vendor that exists in the data.
+
+    People say "Zomato", not "ZOMATO HYPERPURE", and the parsed names carry
+    branch suffixes ("SELECTION ELECTRONICS DAHISAR EAST"). Four passes, most
+    confident first. Returns (resolved, candidates, how).
+    """
+    from app.enrich import normalise
+    v = normalise(value)
+    if not v:
+        return None, [], "empty"
+
+    index = {normalise(k): k for k in known}
+
+    # 1. exact, on the normalised key
+    if v in index:
+        return index[v], [], "exact"
+
+    # 2. every word the user gave appears in the vendor name. This is the case
+    #    that matters most: short names and missing branch suffixes.
+    words = set(v.split())
+    subset = [orig for norm, orig in index.items() if words <= set(norm.split())]
+    if len(subset) == 1:
+        return subset[0], [], "all-words"
+    if len(subset) > 1:
+        fam = _family(subset)
+        if fam:
+            # "ZOMATO HYPERPURE" and "ZOMATO HYPERPURE ANDHERI WEST" are the
+            # same merchant with branch noise on the narration. Summing across
+            # them is the answer the user wanted; asking which branch they meant
+            # is pedantry, and refusing is wrong.
+            return fam, [], "family"
+        return None, sorted(subset)[:5], "ambiguous"
+
+    # 3. a vendor name contained in what the user typed, or vice versa
+    contains = [orig for norm, orig in index.items() if v in norm or norm in v]
+    if len(contains) == 1:
+        return contains[0], [], "substring"
+    if len(contains) > 1:
+        return None, sorted(contains)[:5], "ambiguous"
+
+    # 4. fuzzy, case-insensitive because index keys are already normalised
+    near = get_close_matches(v, list(index), n=3, cutoff=0.72)
+    if len(near) == 1:
+        return index[near[0]], [], "fuzzy"
+    if near:
+        return None, [index[n] for n in near], "ambiguous"
+    return None, [], "unknown"
+
+
 def validate(spec: QuerySpec) -> Verdict:
     if spec.unsupported_reason:
         return Verdict(False, refusal=spec.unsupported_reason)
@@ -50,14 +115,33 @@ def validate(spec: QuerySpec) -> Verdict:
                            + (f" Did you mean {', '.join(near)}?" if near else ""))
         setattr(repaired.filters, dim, str(value).upper() if dim == "category" else value)
 
-    for dim in ("counterparty", "channel", "bank_name"):
+    value = spec.filters.counterparty
+    if value is not None:
+        known = _known_values("counterparty")
+        resolved, candidates, how = resolve_counterparty(str(value), known)
+        if resolved is None:
+            if candidates:
+                return Verdict(False, clarification=(
+                    f"I have several vendors matching '{value}': "
+                    f"{', '.join(candidates)}. Which did you mean?"))
+            return Verdict(False, refusal=
+                           f"I have no vendor matching '{value}' in this dataset.")
+        repaired.filters.counterparty = resolved
+        if how == "family":
+            names = ", ".join(resolved)
+            warnings.append(f"'{value}' matched {len(resolved)} vendor names that "
+                            f"look like the same merchant, and all are included: {names}.")
+        elif how != "exact":
+            warnings.append(f"Interpreted vendor '{value}' as '{resolved}'.")
+
+    for dim in ("channel", "bank_name"):
         value = getattr(spec.filters, dim)
         if value is None:
             continue
-        known = _known_values(dim)
-        if value in known:
+        known = [str(k) for k in _known_values(dim)]
+        if str(value) in known:
             continue
-        near = get_close_matches(str(value), [str(k) for k in known], n=3, cutoff=0.7)
+        near = get_close_matches(str(value), known, n=3, cutoff=0.7)
         if len(near) == 1:
             setattr(repaired.filters, dim, near[0])
             warnings.append(f"Interpreted {dim} '{value}' as '{near[0]}'.")

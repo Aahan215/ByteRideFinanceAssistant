@@ -6,7 +6,7 @@ model or different sampling params, because those live in git and are baked
 into the derived models on the host.
 """
 from __future__ import annotations
-import json, os, pathlib, re
+import json, os, pathlib, re, time
 import httpx, yaml
 
 from app import boundary
@@ -78,11 +78,18 @@ def chat(role: str, system: str, user: str, *, temperature: float | None = None,
     # check and being written to the audit trail.
     boundary.record(role, model, system + "\n" + user)
 
-    try:
-        r = httpx.post(f"{BASE_URL}/chat/completions", json=payload, timeout=TIMEOUT,
-                       headers={"Authorization": f"Bearer {API_KEY}"})
-    except httpx.ConnectError as e:
-        raise ModelUnavailable(f"Cannot reach {BASE_URL}.") from e
+    # Free tiers throttle hard and a full eval run is well over a hundred calls.
+    # Back off and retry rather than scoring a rate limit as a wrong answer.
+    for attempt in range(4):
+        try:
+            r = httpx.post(f"{BASE_URL}/chat/completions", json=payload, timeout=TIMEOUT,
+                           headers={"Authorization": f"Bearer {API_KEY}"})
+        except httpx.ConnectError as e:
+            raise ModelUnavailable(f"Cannot reach {BASE_URL}.") from e
+        if r.status_code != 429 or attempt == 3:
+            break
+        retry_after = r.headers.get("retry-after")
+        time.sleep(float(retry_after) if retry_after else 2 ** attempt * 4)
 
     if r.status_code in (401, 403):
         raise ModelUnavailable(
@@ -106,7 +113,18 @@ def chat(role: str, system: str, user: str, *, temperature: float | None = None,
     data = r.json()
     USAGE.append({"role": role, "model": model,
                   "tokens": data.get("usage", {}).get("total_tokens")})
-    return data["choices"][0]["message"]["content"]
+
+    choice = (data.get("choices") or [{}])[0]
+    content = (choice.get("message") or {}).get("content")
+    if not content:
+        # Gemini models emit reasoning tokens that count against max_tokens, so
+        # a budget that looks generous can be spent entirely on thinking and
+        # return empty content with finish_reason "length".
+        raise ModelUnavailable(
+            f"{model} returned no content (finish_reason="
+            f"{choice.get('finish_reason')!r}). Raise max_tokens: reasoning "
+            f"tokens count against the budget.")
+    return content
 
 
 def chat_json(role: str, system: str, user: str, *, temperature: float | None = None) -> dict:

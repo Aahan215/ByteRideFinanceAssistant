@@ -278,7 +278,16 @@ def coerce(raw: dict, *, patch: bool = False) -> dict:
         if v in (None, "", [], {}):
             continue
         k = DIM_ALIASES.get(str(k).lower(), str(k).lower())
-        if k == "category":
+        if k == "counterparty":
+            # The stored group key was produced by enrich.normalise() -- uppercased,
+            # legal suffixes and punctuation stripped. A filter written any other
+            # way ("Zomato Hyperpure", "Bajaj Finance Ltd.") cannot match it, so
+            # the filter goes through the SAME function the data went through.
+            from app.enrich import normalise
+            v = normalise(str(v))
+            if not v:
+                continue
+        elif k == "category":
             v = str(v).upper().replace(" ", "_")
         elif k == "transaction_type":
             v = str(v).lower()

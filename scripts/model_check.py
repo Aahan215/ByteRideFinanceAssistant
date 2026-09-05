@@ -18,8 +18,11 @@ CANARY_USER = "What is the capital city of France?"
 
 
 def fingerprint(role: str) -> str:
-    out = chat(role, CANARY_SYSTEM, CANARY_USER, temperature=0, max_tokens=16)
-    return hashlib.sha256(out.strip().encode()).hexdigest()[:16]
+    # Generous budget on purpose: reasoning models spend tokens on thoughts
+    # before emitting content, so a tight cap returns nothing and looks like
+    # the model is broken.
+    out = chat(role, CANARY_SYSTEM, CANARY_USER, temperature=0, max_tokens=256)
+    return hashlib.sha256(out.strip().lower().encode()).hexdigest()[:16]
 
 
 def main():

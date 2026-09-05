@@ -34,8 +34,13 @@ def _where(spec: QuerySpec, date_col: str, amount_col: str) -> tuple[list[str], 
         elif field == "description_contains":
             where.append("description ILIKE ?"); params.append(f"%{value}%")
         elif field == "counterparty":
-            # match the normalised group key, not the raw narration
-            where.append("counterparty = ?"); params.append(str(value).upper())
+            # already resolved by the validator; a list means one merchant
+            # recorded under several branch-suffixed names
+            if isinstance(value, (list, tuple)):
+                where.append(f"counterparty IN ({', '.join('?' * len(value))})")
+                params.extend(str(v) for v in value)
+            else:
+                where.append("counterparty = ?"); params.append(str(value))
         else:
             where.append(f"{SEMANTIC['dimensions'][field]['column']} = ?")
             params.append(value)
