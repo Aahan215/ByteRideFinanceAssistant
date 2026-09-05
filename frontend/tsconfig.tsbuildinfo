@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/api.ts","./src/main.tsx","./src/types.ts","./src/components/breakdowntable.tsx","./src/components/comparisontable.tsx","./src/components/composer.tsx","./src/components/confidencebadge.tsx","./src/components/evidencepanel.tsx","./src/components/messagecard.tsx"],"errors":true,"version":"5.9.3"}

@@ -31,9 +31,28 @@ LABELS = {"counterparty": "vendors", "category": "categories", "channel": "chann
 
 
 def narrate(question: str, df, spec, window_desc: str) -> str:
-    """TODO(owner: narrator): call the small model, then run numeric_guard().
-    If the guard flags anything, regenerate once, then fall back to template()."""
-    return template(df, spec, window_desc)
+    """Phrase the answer.
+
+    Default is the deterministic template: it cannot be wrong, and no data
+    leaves the process. Set NARRATOR_MODE=model to have the model phrase it
+    instead -- which means sending the aggregate result table to the provider.
+    That is a deliberate choice, not a default, now the provider is external.
+    """
+    from app.boundary import NARRATOR_MODE
+    base = template(df, spec, window_desc)
+    if NARRATOR_MODE != "model" or df is None or df.empty:
+        return base
+
+    from app.llm import chat
+    from app.validator import numeric_guard
+    table = df.head(15).to_string(index=False)
+    try:
+        text = chat("narrator", SYSTEM, f"Question: {question}\nWindow: {window_desc}\n{table}")
+    except Exception:
+        return base
+    # Every number the model wrote must exist in the result set, or we do not
+    # use its wording at all.
+    return base if numeric_guard(text, df) else text
 
 
 def template(df, spec, window_desc: str) -> str:

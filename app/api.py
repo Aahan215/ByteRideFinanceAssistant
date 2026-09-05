@@ -266,6 +266,17 @@ def export(spec: QuerySpec, fmt: str = "csv"):
                              headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+@app.get("/boundary")
+def boundary_report():
+    """Audit trail for the data/model boundary: what has been sent to the LLM.
+
+    Worth showing in the demo -- it is the difference between claiming the model
+    never sees your data and being able to prove it.
+    """
+    from app import boundary
+    return boundary.report()
+
+
 @app.get("/efficiency")
 def efficiency():
     """Which model answered what, and how often we escalated. Worth 20%."""

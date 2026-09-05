@@ -9,6 +9,8 @@ from __future__ import annotations
 import json, os, pathlib, re
 import httpx, yaml
 
+from app import boundary
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CFG = yaml.safe_load((ROOT / "config" / "models.yaml").read_text())
 
@@ -71,6 +73,10 @@ def chat(role: str, system: str, user: str, *, temperature: float | None = None,
         payload["seed"] = cfg["seed"]
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
+
+    # Single choke point: nothing reaches a model without passing the boundary
+    # check and being written to the audit trail.
+    boundary.record(role, model, system + "\n" + user)
 
     try:
         r = httpx.post(f"{BASE_URL}/chat/completions", json=payload, timeout=TIMEOUT,
