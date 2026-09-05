@@ -162,9 +162,9 @@ def evidence_columns() -> str:
     masked = []
     for col, rule in SENSITIVE.items():
         if rule["mask"] == "last4":
-            # CAST is required: DuckDB infers a numeric account_number from CSV,
-            # and right() only accepts VARCHAR.
-            masked.append(f"concat('XXXXXX', right(CAST({col} AS VARCHAR), 4)) AS {col}")
+            # Already masked at load time from the DECRYPTED value -- masking
+            # here would slice ciphertext and produce a convincing-looking lie.
+            masked.append(f"account_number_masked AS {col}")
         else:
             masked.append(f"CASE WHEN {col} IS NULL THEN NULL ELSE '[redacted]' END AS {col}")
     return ", ".join(cols + masked)

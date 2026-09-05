@@ -93,6 +93,46 @@ def enrich(con, chunk: int = CHUNK) -> dict:
             "coverage": round(hits / done, 4) if done else 0.0, "by_rule": by_rule}
 
 
+def mask_sensitive(con) -> str:
+    """Replace account_number with a TRUTHFUL last-4 mask, once, at load time.
+
+    Masking ciphertext gives "XXXXXXN5an" -- the last four base64 characters,
+    which look like a masked account number and mean nothing. Worse than
+    showing nothing, because it invites the reader to trust it.
+
+    There are only a few hundred accounts, so decrypting them here costs
+    milliseconds. The full number is then DISCARDED: the analytical store never
+    holds a plaintext account number, and what reaches the screen is real.
+    """
+    rows = con.execute("SELECT account_id, account_number FROM account").fetchall()
+    if not rows:
+        return "no accounts"
+
+    from app.crypto import decrypt, CryptoNotConfigured
+    sample = str(rows[0][1] or "")
+    looks_encrypted = len(sample) > 24 and not sample.isdigit()
+
+    masked = []
+    mode = "plaintext"
+    for acct, num in rows:
+        raw = str(num) if num is not None else ""
+        if looks_encrypted:
+            try:
+                raw = decrypt(raw) or ""
+                mode = "decrypted at load"
+            except (CryptoNotConfigured, Exception):
+                masked.append((acct, "[encrypted]"))
+                mode = "no key -- fully redacted"
+                continue
+        masked.append((acct, f"XXXXXX{raw[-4:]}" if len(raw) >= 4 else "XXXXXX"))
+
+    df = pd.DataFrame(masked, columns=["account_id", "account_number_masked"])
+    con.register("mask_df", df)
+    con.execute("CREATE OR REPLACE TABLE account_masked AS SELECT * FROM mask_df")
+    con.unregister("mask_df")
+    return mode
+
+
 def canonicalise(con) -> int:
     """Fold truncated counterparty names into their full form, once."""
     rows = con.execute("""SELECT counterparty, COUNT(*) FROM txn_parsed
@@ -124,13 +164,14 @@ def build_view(con, with_anomalies: bool = False):
                t.utr_number,
                p.channel, p.counterparty, p.counterparty_raw, p.parsed_by,
                p.category, p.category_by,
-               acc.entity_id, acc.account_number, acc.program_id, acc.available_balance,
+               acc.entity_id, m.account_number_masked, acc.program_id, acc.available_balance,
                acc.bank_code, b.bank_name
                {anomaly_cols}
         FROM "transaction" t
         LEFT JOIN txn_parsed p USING (transaction_id)
         LEFT JOIN account acc USING (account_id)
         LEFT JOIN bank    b   ON b.bank_code = acc.bank_code
+        LEFT JOIN account_masked m USING (account_id)
         {anomaly_join}
     """)
 
@@ -182,8 +223,10 @@ def main():
 
     stats = enrich(con)
     n_canon = canonicalise(con)
+    mask_sensitive(con)
     build_view(con)
     build_rollups(con)
+    mask_mode = mask_sensitive(con)
     nstats, nflags = build_stats(con)
     build_view(con, with_anomalies=True)      # re-declare the view to expose them
 
@@ -198,6 +241,7 @@ def main():
     for c, n in cats:
         print(f"  {c:16} {n:>10,}")
     print(f"canonicalised {n_canon} truncated vendor names into their full form")
+    print(f"account numbers: {mask_mode}; only the last-4 mask is stored")
     total = con.execute("SELECT COUNT(*) FROM txn_enriched").fetchone()[0]
     print(f"\nanomaly detection: {nstats:,} counterparties with enough history, "
           f"{nflags:,} flagged rows ({100*nflags/max(total,1):.2f}%)")
