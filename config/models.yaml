@@ -52,7 +52,7 @@ hosted_options:
 roles:
   router:
     base: gemini-2.5-flash-lite
-    ollama_base: qwen2.5:0.5b
+    ollama_base: qwen3:0.6b
     derived: fin-router:v1
     temperature: 0
     top_p: 1.0
@@ -62,7 +62,7 @@ roles:
                              # on different hosts.
   planner:
     base: gemini-2.5-flash        # swap to gemma-3-4b-it for a published 4B
-    ollama_base: qwen2.5:3b       # param count -- same endpoint, same key
+    ollama_base: qwen3:4b
     derived: fin-planner:v1
     temperature: 0
     top_p: 1.0
@@ -70,7 +70,7 @@ roles:
     num_ctx: 8192            # the QuerySpec schema + few-shots are long
   narrator:
     base: gemini-2.5-flash-lite
-    ollama_base: qwen2.5:3b
+    ollama_base: qwen3:4b
     derived: fin-narrator:v1
     temperature: 0.2         # slight variation reads better in prose;
     top_p: 0.9               # the numeric guard makes this safe
@@ -78,7 +78,7 @@ roles:
     num_ctx: 4096
   escalate:
     base: gemini-2.5-flash
-    ollama_base: qwen2.5:7b  # 16GB host: 3B + 7B co-resident (~6.5GB)
+    ollama_base: qwen3:4b
     derived: fin-escalate:v1
     temperature: 0
     top_p: 1.0

@@ -71,41 +71,43 @@ class CoercionError(ValueError):
 
 
 def _prompt() -> str:
-    return f"""You convert a personal-finance question into a QuerySpec JSON object.
+    return f"""You are a JSON converter. Convert a finance question into a QuerySpec JSON object.
+Reply with ONLY a JSON object. No text before or after.
 
-You NEVER compute numbers. You NEVER invent vendor names, categories or dates.
-Reply with a JSON object and nothing else.
+RULES:
+- NEVER compute numbers or invent data.
+- NEVER emit date_range. Dates are handled separately.
+- Tax, fees, charges = CATEGORIES, not vendors.
+- "spend"/"paid"/"payouts" = dataset "payouts" (debits).
+- "received"/"credits"/"income" = dataset "receipts" (credits).
+- "where did I spend the most" = group_by ["counterparty"] on payouts.
 
-Fields:
-  dataset   one of {DATASETS}
-            payouts = money going out (spend). receipts = money coming in.
-            transactions = both.
-  metric    one of {METRICS}
-  group_by  list of {DIMENSIONS}   (use [] when the question wants one number)
-  filters   object; include ONLY keys the question actually mentions:
-              counterparty  a vendor/merchant name, exactly as the user wrote it
-              category      one of {CATEGORIES}
-              channel       UPI IMPS NEFT RTGS FT CHEQUE
-              transaction_type  "credit" or "debit"
-              bank_name, account_id, entity_id, reference_id
-              min_amount, max_amount   numbers
-  limit     integer, default 50
-  unsupported_reason   a short sentence, ONLY when the question cannot be
-                       answered from the fields above. Then omit everything else.
+FIELDS:
+  dataset: {DATASETS}  (payouts=debits, receipts=credits, transactions=both)
+  metric: {METRICS}
+  group_by: list from {DIMENSIONS}  ([] = one number, no breakdown)
+  filters: object with ONLY mentioned keys:
+    counterparty: vendor name as user wrote it
+    category: one of {CATEGORIES}
+    channel: UPI|IMPS|NEFT|RTGS|FT|CHEQUE
+    transaction_type: "credit" or "debit"
+    bank_name: bank name
+    bank_code: HDFC|ICIC|SBIN|UTIB|KKBK|CNRB|UBIN|AUBL|TMBL|RATN
+    account_id, entity_id, program_id, reference_id
+    description_contains: keyword search in description
+    min_amount, max_amount: numbers
+  limit: integer (default 50)
+  unsupported_reason: ONLY if question cannot be answered from above fields.
 
-Do NOT emit date_range. Dates are handled outside the model.
+EXAMPLES:
 
-Tax, fees and charges are CATEGORIES, not vendors.
-"Where did I spend the most" means group_by ["counterparty"] on payouts.
-If the question asks about budgets, forecasts, reconciliation, or anything not
-in the fields above, set unsupported_reason.
-
-Examples:
+Q: How much did we spend on vendor payouts last month?
+{{"dataset":"payouts","metric":"sum_amount","group_by":[],"filters":{{}}}}
 
 Q: Where did I spend the most this month?
 {{"dataset":"payouts","metric":"sum_amount","group_by":["counterparty"],"filters":{{}},"limit":10}}
 
-Q: Total tax I paid in the last 3 months
+Q: Total tax paid in the last 3 months
 {{"dataset":"payouts","metric":"sum_amount","group_by":[],"filters":{{"category":"TAX"}}}}
 
 Q: How many UPI payments did I make?
@@ -117,24 +119,76 @@ Q: What did I pay Reliance Digital?
 Q: Break my spending down by category
 {{"dataset":"payouts","metric":"sum_amount","group_by":["category"],"filters":{{}}}}
 
+Q: Show me all HDFC transactions
+{{"dataset":"transactions","metric":"sum_amount","group_by":[],"filters":{{"bank_code":"HDFC"}}}}
+
+Q: Which transactions are above 50000?
+{{"dataset":"transactions","metric":"count","group_by":[],"filters":{{"min_amount":50000}}}}
+
+Q: Show spending by bank
+{{"dataset":"payouts","metric":"sum_amount","group_by":["bank_name"],"filters":{{}}}}
+
+Q: Monthly spending breakdown
+{{"dataset":"payouts","metric":"sum_amount","group_by":["month"],"filters":{{}}}}
+
+Q: How much did I receive via NEFT?
+{{"dataset":"receipts","metric":"sum_amount","group_by":[],"filters":{{"channel":"NEFT"}}}}
+
+Q: Find transaction with reference 1715499972
+{{"dataset":"transactions","metric":"count","group_by":[],"filters":{{"reference_id":"1715499972"}}}}
+
+Q: What is the largest debit transaction?
+{{"dataset":"payouts","metric":"max_amount","group_by":[],"filters":{{}}}}
+
+Q: Top 5 vendors by spend
+{{"dataset":"payouts","metric":"sum_amount","group_by":["counterparty"],"filters":{{}},"limit":5}}
+
+Q: Quarterly spending breakdown
+{{"dataset":"payouts","metric":"sum_amount","group_by":["quarter"],"filters":{{}}}}
+
 Q: What is my credit score?
-{{"unsupported_reason":"I only have transaction data for your accounts; I have no credit score information."}}
+{{"unsupported_reason":"I only have transaction data; no credit score information available."}}
+
+Q: What will be my balance next month?
+{{"unsupported_reason":"I cannot predict future balances. I can show historical transactions and current data."}}
+
+Q: How many employees do we have?
+{{"unsupported_reason":"I only have financial transaction data; no employee or HR information available."}}
 """
 
 
-PATCH_PROMPT = """The user is following up on a previous question. Reply with a
-JSON object containing ONLY the fields that CHANGE. Omit everything that stays
-the same. Reply {} if nothing changes except the dates.
+PATCH_PROMPT = """The user is following up on a previous question.
+Reply with a JSON object containing ONLY the fields that CHANGE.
+Omit fields that stay the same. Reply {} if nothing changes except dates.
 
 Previous QuerySpec:
 %s
+
+Examples of follow-ups:
+
+Prior: payouts by counterparty
+Follow-up: "break that down by category instead"
+{"group_by":["category"]}
+
+Prior: payouts sum for HDFC
+Follow-up: "what about ICICI?"
+{"filters":{"bank_code":"ICIC"}}
+
+Prior: payouts sum by counterparty
+Follow-up: "show me the count instead"
+{"metric":"count"}
+
+Prior: payouts sum
+Follow-up: "how about receipts?"
+{"dataset":"receipts"}
 
 Follow-up: %s
 """
 
 FOLLOWUP_HINTS = ("what about", "how about", "and what", "compare", "vs ",
                   "versus", "same for", "that", "those", "it ", "instead",
-                  "break that", "drill")
+                  "break that", "drill", "show me", "now ", "also ",
+                  "the same", "similar", "but for", "but with")
 
 
 def looks_like_followup(question: str, prior: QuerySpec | None) -> bool:
