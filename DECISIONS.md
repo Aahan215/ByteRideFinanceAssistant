@@ -82,6 +82,18 @@ What the sample already tells us:
 5. **The key lives in `.env`, never in git.** `FINANCE_AES_KEY`,
    `FINANCE_AES_IV`, `FINANCE_AES_MODE`.
 
+**VERIFIED END TO END** on a 2M-row AES-256-CTR export:
+- `account_id` and `entity_id` are deterministic, so every transaction joins to
+  its account **on ciphertext, with no key** (2,023,541/2,023,541).
+- `account_number` is decrypted ONCE at load for the few hundred accounts, and
+  only the last-4 mask is kept. The store holds **zero plaintext account
+  numbers**, and the mask on screen is real. Masking the ciphertext instead
+  produced "XXXXXXN5an" -- the last four base64 characters, which look like a
+  masked account number and mean nothing.
+- `utr_number` is never decrypted; it shows as `[redacted]`.
+- With no key configured, account numbers degrade to `[encrypted]` rather than
+  to a convincing-looking lie.
+
 **For the deck:** note that the sample uses a fixed nonce, and that production
 would want per-row nonces plus a separate deterministic (SIV) column for joins.
 Knowing the trade-off is worth more than silently copying it.

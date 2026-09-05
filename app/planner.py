@@ -61,74 +61,6 @@ DIM_ALIASES = {
     "type": "transaction_type", "bank": "bank_name", "account": "account_id",
     "entity": "entity_id", "program": "program_id", "cat": "category",
 }
-def _keyword_fallback(question: str) -> dict:
-    """Last-resort deterministic parser when the LLM fails to return JSON.
-    Covers the most common question patterns so we don't refuse unnecessarily."""
-    q = question.lower()
-    spec: dict = {"dataset": "payouts", "metric": "sum_amount", "group_by": [], "filters": {}}
-
-    # Dataset
-    if any(w in q for w in ("receiv", "credit", "income", "inflow")):
-        spec["dataset"] = "receipts"
-    elif any(w in q for w in ("all transaction", "every transaction")):
-        spec["dataset"] = "transactions"
-
-    # Metric
-    if any(w in q for w in ("how many", "count", "number of")):
-        spec["metric"] = "count"
-    elif any(w in q for w in ("average", "avg", "mean")):
-        spec["metric"] = "avg_amount"
-    elif any(w in q for w in ("largest", "biggest", "highest", "max")):
-        spec["metric"] = "max_amount"
-    elif any(w in q for w in ("smallest", "lowest", "min")):
-        spec["metric"] = "min_amount"
-
-    # Group by
-    if any(w in q for w in ("by category", "per category", "category wise", "categorywise",
-                             "most spent category", "top category", "highest category")):
-        spec["group_by"] = ["category"]
-    elif any(w in q for w in ("by vendor", "by counterparty", "per vendor", "top vendor",
-                               "which vendor", "top 5 vendor", "top 10 vendor")):
-        spec["group_by"] = ["counterparty"]
-    elif any(w in q for w in ("by bank", "per bank", "bank wise", "which bank")):
-        spec["group_by"] = ["bank_name"]
-    elif any(w in q for w in ("by channel", "per channel", "channel wise")):
-        spec["group_by"] = ["channel"]
-    elif any(w in q for w in ("by month", "monthly", "month wise")):
-        spec["group_by"] = ["month"]
-
-    # Filters
-    for cat in CATEGORIES:
-        if cat.lower().replace("_", " ") in q or cat.lower() in q:
-            spec["filters"]["category"] = cat
-            break
-    if "upi" in q: spec["filters"]["channel"] = "UPI"
-    elif "neft" in q: spec["filters"]["channel"] = "NEFT"
-    elif "imps" in q: spec["filters"]["channel"] = "IMPS"
-    elif "rtgs" in q: spec["filters"]["channel"] = "RTGS"
-
-    # Limit
-    import re
-    m = re.search(r"top\s+(\d+)", q)
-    if m:
-        spec["limit"] = int(m.group(1))
-
-    # "how much did I spend" / "total spending" / "what did I receive" are valid
-    # even with no group_by or filters — they ask for a single aggregate.
-    has_intent = (spec["filters"] != {} or spec["group_by"] != []
-                  or spec["metric"] != "sum_amount"
-                  or any(w in q for w in ("spend", "spent", "pay", "paid", "total",
-                                          "receiv", "credit", "income", "debit",
-                                          "transaction", "how much", "what did",
-                                          "how many", "show", "list", "give me",
-                                          "emi", "rent", "salary", "insurance")))
-    if not has_intent:
-        return {"unsupported_reason": "I couldn't understand that question. "
-                "Try asking something like 'how much did I spend this month?' or "
-                "'show spending by category'."}
-
-    return spec
-
 WRAPPER_KEYS = ("query", "spec", "queryspec", "query_spec", "result", "output")
 
 # Flattened by hand rather than taken from pydantic: model_json_schema() uses
@@ -276,9 +208,13 @@ def apply_refinement(prior: QuerySpec, r: dict) -> QuerySpec:
 # returned Rs 42 crore, "unreconciled" became a reference_id and returned 0.
 OUT_OF_SCOPE = (
     # no leading \b: "unreconciled" has no boundary before "reconcil"
-    (re.compile(r"\w*reconcil\w*", re.I),
-     "This dataset has no reconciliation status -- there is no field recording "
-     "whether a transaction was matched to an external record."),
+    (re.compile(r"\w*[-\s]?reconcil\w*|\bun[-\s]?matched\b|\bsettlement status\b|"
+                r"\bnot (yet )?(matched|settled|cleared)\b", re.I),
+     "This dataset has no reconciliation status. The transaction table records "
+     "id, date, type, description, amount and reference numbers -- there is no "
+     "field saying whether a transaction was matched to an external record, and "
+     "I will not infer one. I can show transactions with or without a reference "
+     "number if that helps."),
     (re.compile(r"\bbudget(s|ed|ing)?\b", re.I),
      "I have no budgets. I can only report what was actually spent."),
     (re.compile(r"\b(forecast|predict|projection|will i spend|next (month|quarter|year))\b", re.I),
@@ -290,6 +226,22 @@ OUT_OF_SCOPE = (
      "I have no accounting statements -- only bank transactions."),
     (re.compile(r"\binvoices?\b", re.I),
      "I have bank transactions, not invoices."),
+    # Commercial terms. A transaction records WHAT LEFT THE ACCOUNT -- there is
+    # no price, no list price and no discount anywhere in the schema, so a
+    # question about them can only be answered by inventing one.
+    (re.compile(r"\b(discount\w*|cashback|coupons?|promo\w*|vouchers?|"
+                r"rewards?\s*points?|loyalty|best deal|deals?\b|offers?\b)", re.I),
+     "I have no pricing or discount information. A transaction records the "
+     "amount that left the account, not a list price or what was saved against "
+     "one, so I cannot say which vendor discounts most. I can show what you "
+     "actually paid each vendor."),
+    (re.compile(r"\b(margins?|mark[- ]?up|\broi\b|return on investment|"
+                r"\byield\b|profitab\w*)\b", re.I),
+     "I have no cost or revenue data -- only bank transactions -- so I cannot "
+     "compute margins or returns."),
+    (re.compile(r"\b(mrp|list price|unit price|price per|retail price)\b", re.I),
+     "I have no product or pricing data; a transaction records only the amount "
+     "paid."),
     (re.compile(r"\btax\b.{0,15}\bowe|\bowe\b.{0,15}\btax\b|"
                 r"\btax (owed|due|liability|return|refund)\b", re.I),
      "I can show tax payments that were made, but I have nothing about tax owed."),
@@ -313,14 +265,51 @@ CATEGORY_CUES = {
     "CHEQUE": r"cheque|check\b",
     "RENT": r"\brent\b|lease",
     "TRANSFER": r"transfer|\bupi\b|\bimps\b|\bneft\b|\brtgs\b",
+    # merchant-derived categories -- the words people actually use
+    "FOOD": r"\bfood\b|dining|eat(ing)? out|restaurant|swiggy|zomato|takeaway|order(ed|ing)? in",
+    "GROCERIES": r"grocer\w*|supermarket|kirana|provision|dmart|d-mart|big ?bazaar|household shopping",
+    "FUEL": r"\bfuel\b|petrol|diesel|\bgas station\b|filling station",
+    "HEALTHCARE": r"health\w*|medic\w*|pharmac\w*|chemist|doctor|hospital|clinic|medicine",
+    "JEWELLERY": r"jewell?\w*|\bgold\b|ornament",
+    "APPAREL": r"apparel|clothe?s|clothing|fashion|footwear|shoes|eyewear|glasses|sportswear",
+    "ELECTRONICS": r"electronic\w*|gadget|appliance|mobile phone|laptop|\btv\b",
+    "HOME": r"\bhome\b|furnitur\w*|hardware|household goods|interior",
 }
 CATEGORY_CUE_RE = {k: re.compile(v, re.I) for k, v in CATEGORY_CUES.items()}
+
+
+# "how much did I spend ON groceries" is a category REQUEST. "what is my spend
+# this quarter" is not -- so a category filter appearing there was invented.
+CATEGORY_REQUEST_RE = re.compile(
+    r"\b(on|for|towards|in)\s+[a-z]", re.I)
 
 
 def category_is_supported(question: str, category: str | None) -> bool:
     if not category or category not in CATEGORY_CUE_RE:
         return True
     return bool(CATEGORY_CUE_RE[category].search(question))
+
+
+def category_verdict(question: str, category: str | None) -> tuple[str, str | None]:
+    """Returns (verdict, replacement) where verdict is ok | fix | drop | refuse.
+
+    Four outcomes, because they are genuinely different situations:
+      ok      the model's category matches what the user named
+      fix     the user named a category we DO have and the model picked a
+              different one -- correct it rather than discarding the question
+      drop    the model attached a category the user never mentioned
+      refuse  the user asked for a category we do not derive
+    """
+    if category_is_supported(question, category):
+        return "ok", None
+    # did they name some OTHER category we know? then the model simply picked wrong
+    named = [k for k, rx in CATEGORY_CUE_RE.items()
+             if k != category and rx.search(question)]
+    if len(named) == 1:
+        return "fix", named[0]
+    if named:
+        return "drop", None
+    return ("refuse", None) if CATEGORY_REQUEST_RE.search(question) else ("drop", None)
 
 
 def out_of_scope(question: str) -> str | None:
@@ -341,6 +330,31 @@ DATASET_CUES = (
     ("transactions", re.compile(r"\b(all transactions|everything|both|"
                                 r"all of them|overall)\b", re.I)),
 )
+
+
+# "Trend" is a question about time, and it is regular enough in English to
+# decide without the model -- the same lever as dates and dataset direction.
+TREND_RE = re.compile(
+    r"\b(trends?|over time|month[- ]by[- ]month|monthly|by month|per month|"
+    r"quarterly|by quarter|movement|trajectory|how .{0,20}chang\w+)\b", re.I)
+
+
+def wants_trend(question: str) -> bool:
+    return bool(TREND_RE.search(question))
+
+
+# "Where can I save?" / "what should I cut?" is advice-shaped. We do not give
+# advice -- but the factual answer underneath it is a breakdown of the spending
+# that is actually discretionary. Ranking EMI and rent alongside groceries
+# implies you could just stop paying them, and INVESTMENT is saving, not spend.
+SAVINGS_RE = re.compile(
+    r"\b(sav(e|ing|ings)|cut back|cut down|cut my|control (the )?spend\w*|"
+    r"reduce (my )?spend\w*|spend less|trim|tighten|where can i save|"
+    r"what should i cut)\b", re.I)
+
+
+def wants_savings_view(question: str) -> bool:
+    return bool(SAVINGS_RE.search(question))
 
 
 def dataset_from_words(question: str) -> str | None:
@@ -381,22 +395,27 @@ class CoercionError(ValueError):
 
 
 def _prompt() -> str:
-    import datetime
-    today = datetime.date.today().isoformat()
+    from app.schema_context import schema_context
     return f"""You are a JSON converter. Convert a finance question into a QuerySpec JSON object.
 Reply with ONLY a JSON object. No text before or after.
 
-Today's date is {today}. Use this to understand relative references like "this month" or "last week", but NEVER emit date_range — dates are handled separately by the system.
+{schema_context()}
 
 RULES:
 - NEVER compute numbers or invent data.
 - NEVER emit date_range. Dates are handled separately.
-- NEVER copy vendor/counterparty names from examples. Extract the EXACT name the user typed.
 - Tax, fees, charges = CATEGORIES, not vendors.
-- "EMI" before a name means category EMI_LOAN + counterparty = the name after EMI.
 - "spend"/"paid"/"payouts" = dataset "payouts" (debits).
 - "received"/"credits"/"income" = dataset "receipts" (credits).
 - "where did I spend the most" = group_by ["counterparty"] on payouts.
+- A "which X ...?" question MUST group_by that X, otherwise the answer is a
+  single number that cannot say which. "which channel" -> group_by ["channel"],
+  "which bank" -> group_by ["bank_name"], "which vendor" -> ["counterparty"].
+- METRIC comes from the wording, independently of grouping:
+  "spending", "spend", "how much", "total", "value" -> sum_amount
+  "how many", "how often", "number of", "count", "most frequently" -> count
+- NEVER copy a vendor name from the examples. Extract the EXACT name the user typed.
+- "EMI" before a name means category EMI_LOAN and counterparty = the name after EMI.
 
 FIELDS:
   dataset: {DATASETS}  (payouts=debits, receipts=credits, transactions=both)
@@ -426,14 +445,20 @@ Q: Where did I spend the most this month?
 Q: Total tax paid in the last 3 months
 {{"dataset":"payouts","metric":"sum_amount","group_by":[],"filters":{{"category":"TAX"}}}}
 
+Q: Which payment channel do I use most often?
+{{"dataset":"payouts","metric":"count","group_by":["channel"],"filters":{{}}}}
+
+Q: Spending by payment channel last month
+{{"dataset":"payouts","metric":"sum_amount","group_by":["channel"],"filters":{{}}}}
+
+Q: Which bank do I spend the most through?
+{{"dataset":"payouts","metric":"sum_amount","group_by":["bank_name"],"filters":{{}}}}
+
 Q: How many UPI payments did I make?
 {{"dataset":"payouts","metric":"count","group_by":[],"filters":{{"channel":"UPI"}}}}
 
-Q: What did I pay Bajaj Finance?
-{{"dataset":"payouts","metric":"sum_amount","group_by":[],"filters":{{"counterparty":"Bajaj Finance"}}}}
-
-Q: How much did we pay EMI to HDFC Home Loans?
-{{"dataset":"payouts","metric":"sum_amount","group_by":[],"filters":{{"counterparty":"HDFC Home Loans","category":"EMI_LOAN"}}}}
+Q: What did I pay Reliance Digital?
+{{"dataset":"payouts","metric":"sum_amount","group_by":[],"filters":{{"counterparty":"Reliance Digital"}}}}
 
 Q: Break my spending down by category
 {{"dataset":"payouts","metric":"sum_amount","group_by":["category"],"filters":{{}}}}
@@ -465,6 +490,15 @@ Q: Top 5 vendors by spend
 Q: Quarterly spending breakdown
 {{"dataset":"payouts","metric":"sum_amount","group_by":["quarter"],"filters":{{}}}}
 
+Q: How much did we pay EMI to HDFC Home Loans?
+{{"dataset":"payouts","metric":"sum_amount","group_by":[],"filters":{{"counterparty":"HDFC Home Loans","category":"EMI_LOAN"}}}}
+
+Q: What do you think about this vendor?
+{{"unsupported_reason":"I can only report what is in your transactions, not form opinions. Try 'how much did we pay [vendor]?'"}}
+
+Q: Why is this amount so high?
+{{"unsupported_reason":"I cannot explain why an amount is high or low. I can show the breakdown -- try 'break down spending by category'."}}
+
 Q: What is my credit score?
 {{"unsupported_reason":"I only have transaction data; no credit score information available."}}
 
@@ -473,15 +507,6 @@ Q: What will be my balance next month?
 
 Q: How many employees do we have?
 {{"unsupported_reason":"I only have financial transaction data; no employee or HR information available."}}
-
-Q: What do you think about this vendor?
-{{"unsupported_reason":"I can show you transaction data for a vendor — try asking 'how much did we pay [vendor name]?' or 'show transactions for [vendor name]'."}}
-
-Q: Tell me about Vikram Farooq
-{{"dataset":"transactions","metric":"sum_amount","group_by":[],"filters":{{"counterparty":"Vikram Farooq"}}}}
-
-Q: Why is this amount so high?
-{{"unsupported_reason":"I cannot explain why amounts are high or low. I can show you the breakdown — try 'break down spending by category' or 'show top transactions'."}}
 """
 
 
@@ -522,10 +547,13 @@ FOLLOWUP_HINTS = (
     " that ", " that?", " those ", " those?", " it ", " it?",
     "instead", "but for", "but with", "just show", "just the",
     "only the", "narrow", "drill", "break it", "break that", "what if",
-    "pay him", "pay her", "pay them", "paid him", "paid her",
-    "paid them", "from them", "from him", "from her",
-    "how much was", "how many were",
+    # pronouns can only refer to a previous turn
+    "pay him", "pay her", "pay them", "paid him", "paid her", "paid them",
+    "from him", "from her", "from them", "to him", "to her", "to them",
 )
+# NOTE: date phrases ("last month", "this month", "previous", "earlier") are
+# deliberately NOT hints. They appear in perfectly standalone questions --
+# "how much did I spend last month?" is not a refinement of anything.
 
 
 def looks_like_followup(question: str, prior: QuerySpec | None) -> bool:
@@ -647,6 +675,10 @@ def coerce(raw: dict, *, patch: bool = False) -> dict:
                 v = float(str(v).replace(",", "").replace("₹", ""))
             except ValueError:
                 continue
+            # A richer prompt makes small models fill every field: min_amount 0
+            # and max_amount 1e15 are no-ops that only add noise to the SQL.
+            if (k == "min_amount" and v <= 0) or (k == "max_amount" and v >= 1e12):
+                continue
         elif k == "program_id":
             try:
                 v = int(v)
@@ -655,6 +687,15 @@ def coerce(raw: dict, *, patch: bool = False) -> dict:
         if k in known_filter_keys:
             clean[k] = v
     if clean or not patch:
+        d["filters"] = clean
+
+    # transactions + transaction_type=debit IS payouts. Same query, and the
+    # canonical form keeps downstream logic (and the eval) from seeing two
+    # spellings of one thing.
+    ttype = clean.get("transaction_type")
+    if d.get("dataset") == "transactions" and ttype in ("debit", "credit"):
+        d["dataset"] = "payouts" if ttype == "debit" else "receipts"
+        clean.pop("transaction_type", None)
         d["filters"] = clean
 
     if "limit" in present or not patch:
@@ -683,20 +724,19 @@ def _call(chat_fn: ChatFn | None, system: str, user: str, temperature: float | N
           schema: dict | None = None) -> dict:
     if chat_fn is not None:                 # tests inject a stand-in
         return chat_fn("planner", system, user, temperature=temperature)
-    try:
-        return chat_json("planner", system, user, temperature=temperature,
-                         schema=schema or planner_schema())
-    except ValueError:
-        return {"unsupported_reason": "I couldn't understand that question. "
-                "Try asking something specific like 'how much did we pay [name]?' "
-                "or 'show transactions for [name]'."}
+    return chat_json("planner", system, user, temperature=temperature,
+                     schema=schema or planner_schema())
 
 
 def plan_detailed(question: str, prior: QuerySpec | None = None, *,
                   chat_fn: ChatFn | None = None,
                   temperature: float | None = None) -> PlanResult:
     # Refuse before spending a model call on something the schema cannot answer.
-    if (reason := out_of_scope(question)) and prior is None:
+    # NOT gated on `prior is None`. It was, and that meant any out-of-scope
+    # question asked mid-conversation skipped the check entirely -- "which
+    # transactions are unreconciled?" as a follow-up answered "Count: 0".
+    # A follow-up about reconciliation is still about reconciliation.
+    if reason := out_of_scope(question):
         return PlanResult(QuerySpec(dataset="transactions", unsupported_reason=reason),
                           confidence="high", attempts=[])
 
@@ -709,10 +749,6 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
         raw = _call(chat_fn, REFINE_PROMPT % describe_spec(prior), question,
                     temperature, schema=refine_schema())
         attempts.append(json.dumps(raw)[:400])
-        if raw.get("unsupported_reason") and "couldn't understand" in raw.get("unsupported_reason", ""):
-            # _call returned our ValueError fallback — the model couldn't produce JSON.
-            # For a follow-up, just reuse the prior spec (dates will be updated below).
-            raw = {}
         try:
             # Legacy patch shape (tests, and any model that ignores the
             # sentinel vocabulary) still merges the old way.
@@ -742,7 +778,7 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
         attempts.append(json.dumps(raw)[:400])
         try:
             spec = QuerySpec(**coerce(raw))
-        except (ValidationError, CoercionError, ValueError) as e:
+        except (ValidationError, CoercionError) as e:
             # One repair round-trip with the actual error, then give up honestly.
             raw2 = _call(chat_fn, _prompt(),
                          f"{question}\n\nYour previous reply was invalid:\n{e}\n"
@@ -750,7 +786,7 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
             attempts.append(json.dumps(raw2)[:400])
             try:
                 spec = QuerySpec(**coerce(raw2))
-            except (ValidationError, CoercionError, ValueError):
+            except (ValidationError, CoercionError):
                 return PlanResult(
                     QuerySpec(dataset="transactions",
                               unsupported_reason="I could not turn that into a query I trust. "
@@ -762,13 +798,21 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
     # before?" says nothing about tax, but tax is still the right filter.
     inherited = (used_patch and prior is not None
                  and spec.filters.category == prior.filters.category)
-    if (spec.filters.category and not inherited
-            and not category_is_supported(question, spec.filters.category)):
-        return PlanResult(
-            QuerySpec(dataset=spec.dataset, unsupported_reason=(
-                "I do not derive that category from your transactions. I can "
-                f"break spending down by: {', '.join(c.lower().replace('_', ' ') for c in CATEGORIES)}.")),
-            confidence="high", attempts=attempts)
+    if spec.filters.category and not inherited:
+        verdict, replacement = category_verdict(question, spec.filters.category)
+        if verdict == "fix":
+            spec = spec.model_copy(deep=True)
+            spec.filters.category = replacement
+        elif verdict == "refuse":
+            return PlanResult(
+                QuerySpec(dataset=spec.dataset, unsupported_reason=(
+                    "I do not derive that category from your transactions. I can "
+                    f"break spending down by: "
+                    f"{', '.join(c.lower().replace('_', ' ') for c in CATEGORIES)}.")),
+                confidence="high", attempts=attempts)
+        elif verdict == "drop":
+            spec = spec.model_copy(deep=True)
+            spec.filters.category = None
 
     if spec.filters.category == "NOT_IN_DATA":
         return PlanResult(
@@ -776,6 +820,29 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
                 "I do not derive that category from your transactions. I can "
                 f"break spending down by: {', '.join(CATEGORIES)}.")),
             confidence="high", attempts=attempts)
+
+    # Grouping by a dimension you have filtered to ONE value is degenerate: it
+    # can only ever return a single row, and renders as a one-slice pie chart.
+    # "Trends of Priya Sharma" asked for counterparty spending grouped BY
+    # counterparty, which answers nothing.
+    pinned = {d for d in spec.group_by
+              if getattr(spec.filters, d, None) not in (None, [], "")}
+    if pinned:
+        spec = spec.model_copy(update={
+            "group_by": [d for d in spec.group_by if d not in pinned]})
+
+    # A savings question is really "what of my spending is discretionary".
+    # Answer that factually and say what was left out; do not recommend cuts.
+    if wants_savings_view(question) and not spec.filters.category:
+        committed = SEMANTIC.get("committed_categories", [])
+        spec = spec.model_copy(update={"dataset": "payouts", "group_by": ["category"]})
+        spec.filters.exclude_categories = committed
+
+    # A trend question is about time. If nothing meaningful is left to group by,
+    # group by month -- that is what "trend" means.
+    if wants_trend(question) and not spec.group_by:
+        unit = "quarter" if re.search(r"\bquarterly|by quarter\b", question, re.I) else "month"
+        spec = spec.model_copy(update={"group_by": [unit]})
 
     if dr is not None:
         spec = spec.model_copy(update={"date_range": dr})

@@ -31,6 +31,9 @@ class Filters(BaseModel):
     # branch-suffixed names ("X" and "X ANDHERI WEST").
     counterparty: Optional[str | list[str]] = None
     category: Optional[str] = None          # TAX / BANK_CHARGES / TRANSFER / ...
+    # Set by the planner, never by the model: used to exclude commitments from a
+    # "where could I save?" breakdown.
+    exclude_categories: Optional[list[str]] = None
     channel: Optional[str] = None           # UPI / IMPS / NEFT / FT / CHEQUE / CHARGES
     transaction_type: Optional[Literal["credit", "debit"]] = None
     bank_name: Optional[str] = None

@@ -77,6 +77,48 @@ CATEGORIES: list[tuple[str, re.Pattern]] = [
     ("RENT",        re.compile(r"\bRENT\b", re.I)),
 ]
 
+# Category from the MERCHANT, not the narration keywords.
+#
+# The keyword rules above classify what KIND of transaction it is (tax, EMI,
+# charges). They cannot answer "how much did I spend on food", because that
+# depends on WHO was paid. This is the merchant -> category mapping real
+# finance apps get from an MCC code; we do not have one, so it is by name.
+#
+# Applied only after the keyword rules, so a GST payment to a supermarket is
+# still TAX. Runs at load time like everything else.
+MERCHANT_CATEGORIES: list[tuple[str, re.Pattern]] = [
+    ("FOOD", re.compile(r"SWIGGY|ZOMATO|DOMINOS|PIZZA|MCDONALD|KFC|STARBUCKS|"
+                        r"CAFE|RESTAURANT|BIRYANI|BAKERY|EATERY|FOODS?", re.I)),
+    ("GROCERIES", re.compile(r"DMART|D-MART|AVENUE SUPERMART|BIG ?BAZAAR|SPENCER|"
+                             r"MORE MEGASTORE|NILGIRIS|METRO CASH|RELIANCE FRESH|"
+                             r"PROVISION|GENERAL STORES?|SUPERMARKET|KIRANA|"
+                             r"ANNAPURNA|BLINKIT|INSTAMART|GROCER", re.I)),
+    ("FUEL", re.compile(r"INDIAN ?OIL|BHARAT PETROLEUM|HP FUEL|HPCL|BPCL|IOCL|"
+                        r"PETROL|DIESEL|FUEL STATION|SHELL", re.I)),
+    ("HEALTHCARE", re.compile(r"APOLLO|MEDPLUS|NETMEDS|PHARMEASY|PHARMACY|CHEMIST|"
+                              r"HOSPITAL|CLINIC|DIAGNOSTIC|LAB|MEDICAL", re.I)),
+    ("JEWELLERY", re.compile(r"KALYAN JEWELL|TANISHQ|MALABAR GOLD|JEWELL|"
+                             r"GOLD|TITAN COMPANY", re.I)),
+    ("APPAREL", re.compile(r"PANTALOONS|WESTSIDE|SHOPPERS STOP|TRENT LTD|BATA|"
+                           r"LIFESTYLE|MYNTRA|FASHION|APPAREL|CLOTHING|"
+                           r"DECATHLON|LENSKART|TITAN EYE", re.I)),
+    ("ELECTRONICS", re.compile(r"CROMA|VIJAY SALES|RELIANCEDIGITAL|RELIANCE DIGITAL|"
+                               r"ELECTRONICS|MOBILE WORLD|MOBILE|COMMUNICATION|"
+                               r"DIGITAL WORLD|SELECTION MOBILE", re.I)),
+    ("HOME", re.compile(r"IKEA|HOME CENTRE|HARDWARE|FURNITURE|ELECTRICALS|"
+                        r"HOME ?TOWN", re.I)),
+]
+
+
+def merchant_category(counterparty: str | None) -> str | None:
+    if not counterparty:
+        return None
+    for name, rx in MERCHANT_CATEGORIES:
+        if rx.search(counterparty):
+            return name
+    return None
+
+
 # Everything with a payment channel but no category signal is a plain transfer.
 TRANSFER_CHANNELS = {"UPI", "IMPS", "NEFT", "RTGS", "FT"}
 
@@ -177,8 +219,20 @@ def parse(description: str | None) -> Parsed:
             raw, rule = parts[-1], f"{channel.lower()}-slash-last"
 
     if raw is None:
-        raw = _best_token(re.split(r"[/\-|]", d))
-        rule = "longest-alpha-run" if raw else "unparsed"
+        # Narrations with no separator at all ("UPSTOX S897541731",
+        # "SIP HDFC MF S123456") were the whole unparsed population: the trailing
+        # reference code drags the letter ratio below the plausibility floor, so
+        # the entire string got rejected. Strip the code and retry first.
+        stripped = TRAILING_REF.sub("", d).strip()
+        if stripped != d and _plausible_name(stripped):
+            raw, rule = stripped, "trailing-ref-stripped"
+        else:
+            raw = _best_token(re.split(r"[/\-|]", d))
+            rule = "longest-alpha-run" if raw else None
+            if raw is None:
+                # last resort: whitespace-separated words
+                raw = _best_token(TRAILING_REF.sub("", d).split())
+                rule = "longest-word-run" if raw else "unparsed"
 
     cat, cat_by = categorise(d, channel)
 
@@ -192,7 +246,13 @@ def parse(description: str | None) -> Parsed:
     raw = TRAILING_PLACEHOLDER.sub("", re.sub(r"\s+", " ", raw.strip()))
     if not _plausible_name(raw):
         return Parsed(channel, None, None, "unparsed", cat, cat_by)
-    return Parsed(channel, raw, normalise(raw), rule, cat, cat_by)
+
+    name = normalise(raw)
+    # Only upgrade a plain TRANSFER: an explicit keyword category (TAX, EMI,
+    # BANK_CHARGES) describes the transaction and outranks who was paid.
+    if cat in ("TRANSFER", "UNCATEGORISED") and (mc := merchant_category(name)):
+        cat, cat_by = mc, "merchant"
+    return Parsed(channel, raw, name, rule, cat, cat_by)
 
 
 def canonical_map(names_with_counts: list[tuple[str, int]]) -> dict[str, str]:

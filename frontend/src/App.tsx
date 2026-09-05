@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ask, health } from './api'
-import type { Health, Message } from './types'
+import type { Health, Message, ScopeOption } from './types'
 import { MessageCard } from './components/MessageCard'
 import { Composer } from './components/Composer'
+import { ScopePicker } from './components/ScopePicker'
 import './App.css'
 
 const SESSION = Math.random().toString(36).slice(2)
@@ -11,6 +12,8 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([])
   const [meta, setMeta] = useState<Health | null>(null)
   const [busy, setBusy] = useState(false)
+  const [scope, setScope] = useState<ScopeOption>(
+    { level: 'all', label: 'All accounts', txns: 0 })
   const feedRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { health().then(setMeta).catch(() => setMeta(null)) }, [])
@@ -25,7 +28,7 @@ export default function App() {
       { id, role: 'assistant', pending: true }])
     setBusy(true)
     try {
-      const answer = await ask(question, SESSION)
+      const answer = await ask(question, SESSION, scope)
       setMessages(m => m.map(x => x.id === id ? { ...x, pending: false, answer } : x))
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e)
@@ -33,7 +36,7 @@ export default function App() {
     } finally {
       setBusy(false)
     }
-  }, [])
+  }, [scope])
 
   // The assistant's "today" is the latest date in the DATA. Saying so up front
   // stops anyone reading "this month" as the wall-clock month.
@@ -42,7 +45,10 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <h1>Finance Assistant</h1>
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">FA</span>
+          <h1>Finance Assistant</h1>
+        </div>
         {anchor ? (
           <span className="anchor">
             Data through <b>{anchor.toLocaleDateString('en-IN',
@@ -51,6 +57,18 @@ export default function App() {
               { month: 'long', year: 'numeric' })}
           </span>
         ) : <span className="anchor">backend unreachable</span>}
+        <ScopePicker
+          value={scope}
+          onChange={s => {
+            // A follow-up refining the previous scope's question would be
+            // nonsense, so the transcript starts clean.
+            setScope(s)
+            setMessages([])
+          }}
+        />
+        {meta?.stale && meta.warning && (
+          <span className="anchor-warning" role="alert">{meta.warning}</span>
+        )}
       </header>
 
       <div className="feed" ref={feedRef}>
@@ -61,7 +79,7 @@ export default function App() {
                You can open the query and the source records behind any number.</p>
           </div>
         )}
-        {messages.map(m => <MessageCard key={m.id} message={m} />)}
+        {messages.map(m => <MessageCard key={m.id} message={m} onAsk={send} />)}
       </div>
 
       <Composer onSend={send} busy={busy} />

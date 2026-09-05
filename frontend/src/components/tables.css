@@ -165,3 +165,12 @@
   font-size: 12px;
   font-weight: 600;
 }
+
+/* --- ported from origin/feature --- */
+.data-table th, .comparison-table th {
+  background: var(--bg);
+  letter-spacing: .04em;
+  position: sticky; top: 0;
+}
+.evidence-panel { box-shadow: none; }
+.sql-pre { box-shadow: inset 0 0 0 1px var(--line); }

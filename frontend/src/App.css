@@ -12,3 +12,36 @@
 .empty { text-align: center; color: var(--muted); padding: 60px 20px; }
 .empty h2 { color: var(--ink); font-size: 20px; margin: 0 0 8px; font-weight: 600; }
 .empty p { margin: 0 auto; max-width: 460px; font-size: 14px; }
+
+/* Wall-clock anchor against a historical export: every relative date matches
+   nothing. Loud on purpose -- the failure is otherwise silent. */
+.anchor-warning {
+  flex-basis: 100%;
+  margin-top: 6px;
+  padding: 7px 11px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+/* --- elevation and motion, ported from origin/feature --- */
+.topbar { box-shadow: var(--shadow); z-index: 10; }
+.topbar h1 {
+  background: var(--gradient);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.empty h2 { font-size: 24px; letter-spacing: -.02em; }
+
+/* A product mark, ported from origin/feature. The header was a bare string. */
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-mark {
+  width: 30px; height: 30px; border-radius: 8px;
+  background: var(--gradient);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: 13px; letter-spacing: -.02em;
+  flex-shrink: 0;
+}
+.topbar { height: 60px; padding: 0 24px; }
+.topbar h1 { font-size: 17px; font-weight: 700; letter-spacing: -.02em; }

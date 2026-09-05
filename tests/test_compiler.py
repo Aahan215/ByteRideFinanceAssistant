@@ -58,11 +58,19 @@ def test_multi_turn_patch_keeps_prior_context():
     assert nxt.dataset == "payouts" and nxt.date_range.offset == -2
 
 
-def test_masking_survives_a_numeric_account_number():
-    # DuckDB infers account_number as BIGINT from CSV; right() needs VARCHAR
+def test_the_mask_comes_from_the_decrypted_value_not_the_ciphertext():
+    """Masking ciphertext yields "XXXXXXN5an" -- the last four base64 chars,
+    which look like a masked account number and mean nothing. The mask is built
+    once at load time from the decrypted value, and the full number is
+    discarded, so the store holds no plaintext account number at all."""
     from app.compiler import evidence_columns
     cols = evidence_columns()
-    assert "CAST(account_number AS VARCHAR)" in cols
+    # The property, not the column name: no mask is CONSTRUCTED here. The
+    # loader already stored "XXXXXX" + the decrypted last four, so the query
+    # only passes it through.
+    assert "account_number" in cols
+    assert "XXXXXX" not in cols and "right(" not in cols
+    assert "[redacted]" in cols          # utr is never shown at all
     assert "utr_number" in cols and "[redacted]" in cols
 
 

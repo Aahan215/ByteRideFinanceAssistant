@@ -17,6 +17,18 @@ from dataclasses import dataclass
 # 0.6745 rescales MAD so the score reads like a normal-distribution z-score.
 MAD_TO_SIGMA = 0.6745
 THRESHOLD = 3.5          # conservative: a callout that cries wolf is worse than none
+
+# The brief asks us to flag a payout that looks "unusually large". Small
+# outliers are real but far less interesting -- a failed or test payment -- and
+# mixing them in dilutes the callout. Set to False to surface both.
+HIGH_SIDE_ONLY = True
+
+# A robust score alone ranked "3x the usual rent" above a 357x merchant payment.
+# Statistically that is right -- rent is near-constant, so 3x is genuinely
+# surprising -- but "unusually large" should also LOOK large to the reader.
+# Requiring a material multiple on top of the score keeps the statistics and
+# drops callouts nobody would act on.
+MIN_MULTIPLE = 5.0
 MIN_HISTORY = 20         # below this, "usual for this vendor" is not a real claim
 FLAT_TOLERANCE = 0.5     # for fixed-amount vendors (EMI, rent) where MAD == 0
 
@@ -31,10 +43,26 @@ class Flag:
     n: int
 
     def sentence(self) -> str:
-        mult = self.amount / self.typical if self.typical else 0
-        return (f"{self.counterparty}: ₹{self.amount:,.0f} is "
-                f"{mult:.1f}x the usual ₹{self.typical:,.0f} "
-                f"across {self.n:,} past transactions")
+        from app.narrator import inr          # one currency format across the app
+
+        seen = f"across {self.n:,} past transactions"
+        # `not nan` is False, so a NaN typical slipped past the guard below and
+        # the division produced a NaN multiple.
+        bad = [v for v in (self.amount, self.typical)
+               if v is None or (isinstance(v, float) and v != v)]
+        if bad:
+            return f"{self.counterparty}: {inr(self.amount)} ({seen})"
+        if not self.typical:
+            return f"{self.counterparty}: {inr(self.amount)} ({seen})"
+        if self.direction == "high":
+            return (f"{self.counterparty}: {inr(self.amount)} is "
+                    f"{self.amount / self.typical:.0f}x the usual "
+                    f"{inr(self.typical)} {seen}")
+        # "0.0x the usual" is not a sentence anyone can act on. Say how much
+        # SMALLER it is, in the same shape as the high-side wording.
+        return (f"{self.counterparty}: {inr(self.amount)} is "
+                f"{self.typical / self.amount:.0f}x smaller than the usual "
+                f"{inr(self.typical)} {seen}")
 
 
 STATS_SQL = """
@@ -108,7 +136,7 @@ def scan_sql(where: list[str], view: str, limit: int = 3,
             f"ORDER BY score DESC LIMIT {limit * 4}")
 
 
-def from_scan(df, limit: int = 3) -> list[Flag]:
+def from_scan(df, limit: int = 3, high_only: bool = HIGH_SIDE_ONLY) -> list[Flag]:
     """Turn scan rows into flags, one per counterparty."""
     if df is None or df.empty:
         return []
@@ -116,8 +144,13 @@ def from_scan(df, limit: int = 3) -> list[Flag]:
     for r in df.itertuples():
         if r.counterparty in seen:
             continue
-        seen.add(r.counterparty)
         direction = "high" if r.transaction_amount >= r.typical_amount else "low"
+        if high_only and direction != "high":
+            continue
+        if r.typical_amount and direction == "high" \
+                and r.transaction_amount / r.typical_amount < MIN_MULTIPLE:
+            continue
+        seen.add(r.counterparty)
         out.append(Flag(r.counterparty, float(r.transaction_amount),
                         float(r.typical_amount), float(r.score), direction, int(r.n)))
         if len(out) >= limit:

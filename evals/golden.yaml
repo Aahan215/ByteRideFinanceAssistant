@@ -274,6 +274,23 @@
   question: How much tax do I still owe this year?
   expect_refusal: true
 
+- id: ref_discount
+  tags: [refusal]
+  # Answered with a top-vendors-by-spend ranking: a different question, answered
+  # confidently. Nothing in the schema records a price or a discount.
+  question: Which vendor gives me the best discount?
+  expect_refusal: true
+
+- id: ref_cashback
+  tags: [refusal]
+  question: How much cashback did I earn last month?
+  expect_refusal: true
+
+- id: ref_margin
+  tags: [refusal]
+  question: What is my margin on these purchases?
+  expect_refusal: true
+
 - id: ref_invoices
   tags: [refusal]
   question: Show me all invoices from Acme Corp
@@ -287,8 +304,27 @@
 
 - id: amb_unknown_category
   tags: [ambiguous]
-  question: How much did I spend on groceries?
+  # Was "groceries", which became a real merchant-derived category. Swapped for
+  # one we genuinely do not derive -- a golden set has to track the product.
+  question: How much did I spend on travel?
   expect_refusal: true          # not a category we derive
+
+- id: flt_groceries
+  tags: [filter, category]
+  question: How much did I spend on groceries last month?
+  expect_spec: {dataset: payouts, metric: sum_amount, filters: {category: GROCERIES},
+                date_range: {kind: relative, unit: month, offset: -1}}
+
+- id: flt_food
+  tags: [filter, category]
+  question: How much did I spend on food?
+  expect_spec: {dataset: payouts, metric: sum_amount, filters: {category: FOOD}}
+
+- id: flt_fuel_quarter
+  tags: [filter, category, dates]
+  question: What did I spend on fuel this quarter?
+  expect_spec: {dataset: payouts, metric: sum_amount, filters: {category: FUEL},
+                date_range: {kind: relative, unit: quarter, offset: 0}}
 
 - id: amb_bare_word
   tags: [ambiguous]

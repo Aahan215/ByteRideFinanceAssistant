@@ -37,14 +37,24 @@ export interface Answer {
   confidence_reasons: string[]
   warnings: string[]
   refused: boolean
+  /** A question back to the user. Rendered with `suggestions` as click targets. */
+  clarification?: string | null
+  /** Ready-to-ask questions, one per option -- the user clicks instead of retyping. */
+  suggestions?: string[]
   /** The QuerySpec that actually ran. Powers export and "show your working". */
   spec: Record<string, unknown> | null
 }
 
 export interface Health {
   ok: boolean
-  /** The assistant's "today" -- the latest date in the DATA, not the clock. */
+  /** The assistant's "today". See `anchor.mode` in the semantic layer. */
   anchor_date: string
+  /** "data" (latest transaction) or "wall_clock" (the real date). */
+  mode?: 'data' | 'wall_clock'
+  data_latest?: string
+  /** True when the anchor is ahead of the data, so relative dates match nothing. */
+  stale?: boolean
+  warning?: string | null
 }
 
 export interface Message {
@@ -54,4 +64,21 @@ export interface Message {
   answer?: Answer
   pending?: boolean
   error?: string
+}
+
+
+export type ScopeLevel = 'all' | 'entity' | 'account'
+
+export interface ScopeOption {
+  level: ScopeLevel
+  value?: string
+  label: string
+  txns: number
+  accounts?: number
+}
+
+export interface Scopes {
+  all: ScopeOption
+  entities: ScopeOption[]
+  accounts: ScopeOption[]
 }

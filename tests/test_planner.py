@@ -238,3 +238,181 @@ def test_a_category_the_user_never_named_is_not_trusted():
     assert category_is_supported("total tax paid", "TAX")
     assert category_is_supported("my electricity bills", "UTILITIES")
     assert category_is_supported("anything", None)
+
+
+def test_reconciliation_is_refused_in_every_phrasing():
+    """The schema has no reconciliation field. The model must never infer one --
+    a 'Count: 0' here reads as 'you have zero unreconciled transactions'."""
+    from app.planner import out_of_scope
+    for q in ["Which transactions are unreconciled?", "un-reconciled items",
+              "show unmatched entries", "what is the settlement status?",
+              "which payments are not yet cleared?", "reconcile my account",
+              "reconciliation report"]:
+        assert out_of_scope(q), q
+
+
+def test_date_phrases_are_not_treated_as_follow_ups():
+    """"How much did I spend last month?" is a standalone question, not a
+    refinement of whatever came before."""
+    prior = QuerySpec(dataset="payouts", filters=Filters(counterparty="ZOMATO"))
+    for q in ["How much did I spend last month?", "this month total?",
+              "what did I spend previously"]:
+        assert not looks_like_followup(q, prior), q
+
+
+def test_pronouns_are_follow_ups():
+    prior = QuerySpec(dataset="payouts")
+    for q in ["how much did I pay him?", "what did I receive from them?"]:
+        assert looks_like_followup(q, prior), q
+
+
+def test_markdown_fenced_json_is_parsed():
+    """Small models wrap JSON in fences far more often than large ones."""
+    import app.llm as llm
+    orig = llm.chat
+    llm.chat = lambda *a, **k: '```json\n{"dataset": "payouts", "metric": "count"}\n```'
+    try:
+        got = llm.chat_json("planner", "s", "u")
+    finally:
+        llm.chat = orig
+    assert got == {"dataset": "payouts", "metric": "count"}
+
+
+def test_a_category_the_user_named_is_corrected_not_discarded():
+    """"Spend on groceries" with the model answering CASH: groceries IS a
+    category now, so fix the model's choice rather than refusing."""
+    from app.planner import category_verdict
+    assert category_verdict("How much did I spend on groceries?", "CASH") == ("fix", "GROCERIES")
+    assert category_verdict("what did I spend on fuel?", "UTILITIES") == ("fix", "FUEL")
+    assert category_verdict("total spent on food", "TRANSFER") == ("fix", "FOOD")
+
+
+def test_an_invented_category_is_dropped_not_refused():
+    """The model attached category=TRANSFER to "what is my spend this quarter?",
+    which mentions no category. Refusing threw away an answerable question; the
+    right move is to drop the filter the user never asked for."""
+    from app.planner import category_verdict
+    assert category_verdict("What is my spend this quarter?", "TRANSFER")[0] == "drop"
+    assert category_verdict("How much did I spend last month?", "CASH")[0] == "drop"
+
+
+def test_a_category_the_user_asked_for_but_we_lack_is_refused():
+    from app.planner import category_verdict
+    for q in ["How much did I spend on travel?", "what did I spend on education?",
+              "how much on entertainment?"]:
+        assert category_verdict(q, "CASH")[0] == "refuse", q
+
+
+def test_a_correctly_named_category_passes():
+    from app.planner import category_verdict
+    assert category_verdict("How much cash did I withdraw?", "CASH") == ("ok", None)
+    assert category_verdict("total tax paid last quarter", "TAX") == ("ok", None)
+
+
+def test_transactions_plus_a_direction_canonicalises_to_the_dataset():
+    """transactions + transaction_type=debit IS payouts -- one query, two
+    spellings. Canonical form keeps downstream logic seeing one."""
+    d = coerce({"dataset": "transactions", "filters": {"transaction_type": "debit"}})
+    assert d["dataset"] == "payouts" and "transaction_type" not in d["filters"]
+    d = coerce({"dataset": "transactions", "filters": {"transaction_type": "credit"}})
+    assert d["dataset"] == "receipts"
+
+
+def test_no_op_amount_bounds_are_dropped():
+    """A richer prompt makes small models fill every field; min 0 / max 1e15 are
+    no-ops that only add noise to the SQL."""
+    d = coerce({"dataset": "payouts", "filters": {"min_amount": 0, "max_amount": 1e15}})
+    assert d["filters"] == {}
+    d = coerce({"dataset": "payouts", "filters": {"min_amount": 5000}})
+    assert d["filters"]["min_amount"] == 5000
+
+
+def test_out_of_scope_is_checked_on_follow_ups_too():
+    """It used to be gated on `prior is None`, so asking "which transactions
+    are unreconciled?" mid-conversation skipped the check and answered
+    "Count: 0" with high confidence."""
+    prior = QuerySpec(dataset="payouts", metric="sum_amount")
+    r = plan_detailed("Which transactions are unreconciled?", prior,
+                      chat_fn=lambda *a, **k: {"dataset": "transactions", "metric": "count"})
+    assert r.spec.unsupported_reason and "reconciliation" in r.spec.unsupported_reason
+
+
+def test_grouping_by_a_pinned_filter_is_dropped():
+    """"Trends of Priya Sharma" came back grouped BY counterparty while
+    counterparty was filtered to PRIYA SHARMA -- one row, rendered as a
+    one-slice pie chart that answers nothing."""
+    r = plan_detailed("Give me the trends of Priya Sharma for this quarter",
+                      chat_fn=lambda *a, **k: {
+                          "dataset": "payouts", "metric": "sum_amount",
+                          "group_by": ["counterparty"],
+                          "filters": {"counterparty": "Priya Sharma"}})
+    assert "counterparty" not in r.spec.group_by
+    assert r.spec.group_by == ["month"]          # a trend is about time
+    assert r.spec.filters.counterparty == "PRIYA SHARMA"
+
+
+def test_trend_wording_is_detected_deterministically():
+    from app.planner import wants_trend
+    for q in ["show me the trend", "spending over time", "month by month",
+              "monthly spending", "how has my spending changed"]:
+        assert wants_trend(q), q
+    for q in ["where did I spend the most", "total tax last quarter"]:
+        assert not wants_trend(q), q
+
+
+def test_a_normal_grouping_is_untouched():
+    r = plan_detailed("Where did I spend the most this month?",
+                      chat_fn=lambda *a, **k: {
+                          "dataset": "payouts", "metric": "sum_amount",
+                          "group_by": ["counterparty"], "filters": {}})
+    assert r.spec.group_by == ["counterparty"]
+
+
+def test_a_savings_question_shows_discretionary_spend_only():
+    """"Where should I control the spend?" ranked EMI, LIC premium and
+    investments as things to cut. Those are commitments, and an investment is
+    saving rather than spending -- listing them implies you could just stop."""
+    from app.planner import wants_savings_view
+    assert wants_savings_view("if i was to do some savings, where should i control the spend?")
+    assert wants_savings_view("where can I save this month?")
+    assert wants_savings_view("what should I cut back on?")
+    assert not wants_savings_view("how much did I spend this month?")
+
+    r = plan_detailed("where should i control the spend this month?",
+                      chat_fn=lambda *a, **k: {"dataset": "payouts",
+                                               "metric": "sum_amount",
+                                               "group_by": ["counterparty"]})
+    assert r.spec.group_by == ["category"]
+    excluded = r.spec.filters.exclude_categories or []
+    for c in ("EMI_LOAN", "RENT", "INSURANCE", "INVESTMENT", "TAX"):
+        assert c in excluded, c
+
+
+def test_the_savings_view_excludes_commitments_in_sql():
+    from app.compiler import compile_sql
+    from app.spec import QuerySpec, Filters
+    import datetime
+    spec = QuerySpec(dataset="payouts", group_by=["category"],
+                     filters=Filters(exclude_categories=["TAX", "EMI_LOAN"]))
+    sql, params, _ = compile_sql(spec, datetime.date(2026, 6, 30))
+    assert "category NOT IN (?, ?)" in sql
+    assert "TAX" in params and "EMI_LOAN" in params
+
+
+def test_commercial_concepts_absent_from_the_schema_are_refused():
+    """"Which vendor gives me the best discount?" answered with a top-vendors-
+    by-spend ranking -- a different question, answered confidently. There is no
+    price, list price or discount anywhere in the schema."""
+    from app.planner import out_of_scope
+    for q in ["Which vendor gives me the best discount",
+              "how much cashback did I get?", "which vendor has the best offers?",
+              "what is my margin on this?", "what was the MRP?",
+              "show me the best deal", "how many reward points do I have?"]:
+        assert out_of_scope(q), q
+
+
+def test_price_questions_we_CAN_answer_are_not_blocked():
+    from app.planner import out_of_scope
+    for q in ["what was my largest payment?", "how much did I pay Zomato?",
+              "what did I spend the most on?", "cheapest month for groceries"]:
+        assert out_of_scope(q) is None, q

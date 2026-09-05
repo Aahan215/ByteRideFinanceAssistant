@@ -3,13 +3,21 @@ from __future__ import annotations
 from app.validator import numeric_guard
 
 
+# Plain "{:,.2f}" formatting disagrees with the en-IN grouping the UI uses, so
+# the same figure appears two different ways on one screen.
 def inr(x) -> str:
-    """Format a number as Indian-style comma-separated string with ₹ prefix."""
-    if x is None:
+    # round(nan) raises ValueError, and an aggregate over zero rows IS nan.
+    # Every number in the app is formatted here, so this is the right place to
+    # stop NaN rather than at each call site.
+    if x is None or (isinstance(x, float) and x != x):
         return "-"
-    neg, n = x < 0, abs(round(float(x)))
+    try:
+        n = abs(round(float(x)))
+    except (ValueError, OverflowError):
+        return "-"
+    neg = float(x) < 0
     s = str(n)
-    if len(s) > 3:
+    if len(s) > 3:                       # 2,02,07,329 -- last 3, then pairs
         head, tail = s[:-3], s[-3:]
         parts = []
         while len(head) > 2:
@@ -20,6 +28,7 @@ def inr(x) -> str:
     return f"{'-' if neg else ''}\u20b9{s}"
 
 
+# "counterpartys" is not a word, and it appears on screen next to real numbers.
 LABELS = {"counterparty": "vendors", "category": "categories", "channel": "channels",
           "bank_name": "banks", "month": "months", "quarter": "quarters",
           "transaction_type": "transaction types", "account_id": "accounts",
@@ -27,14 +36,25 @@ LABELS = {"counterparty": "vendors", "category": "categories", "channel": "chann
 
 
 def _measure(spec, value) -> str:
+    if value is None or (isinstance(value, float) and value != value):
+        return "-"
     return f"{int(value):,}" if spec.metric == "count" else inr(value)
 
 
-def _system() -> str:
-    import datetime
-    today = datetime.date.today().isoformat()
-    return f"""You are a finance assistant narrator. You explain query results in plain English.
-Today's date is {today}.
+def _group_value(dim: str, value) -> str:
+    """A month is "April 2026", not "2026-04-01 00:00:00"."""
+    if dim in ("month", "quarter") and value is not None:
+        try:
+            import pandas as pd
+            ts = pd.Timestamp(value)
+            if dim == "month":
+                return ts.strftime("%B %Y")
+            return f"Q{(ts.month - 1) // 3 + 1} {ts.year}"
+        except Exception:
+            pass
+    return str(value)
+
+SYSTEM = """You are a finance assistant narrator. You explain query results in plain English.
 
 STRICT RULES:
 1. Use ONLY numbers that appear exactly in the data table below. Never round, estimate, or calculate.
@@ -54,9 +74,6 @@ FORMAT:
 """
 
 
-SYSTEM = _system()
-
-
 def narrate(question: str, df, spec, window_desc: str) -> str:
     """Phrase the answer.
 
@@ -64,16 +81,15 @@ def narrate(question: str, df, spec, window_desc: str) -> str:
     leaves the process. NARRATOR_MODE=model has the model phrase it instead,
     which means sending the aggregate result table to the provider -- a
     deliberate choice, not a default, now the provider is third-party.
+
+    When the model does write the prose, every number in it must appear in the
+    result set. If not, we tell the model exactly which numbers were invented
+    and let it try once more; a second failure falls back to the template.
     """
     import pandas as pd
+    from app.boundary import NARRATOR_MODE
 
     base = template(df, spec, window_desc)
-
-    try:
-        from app.boundary import NARRATOR_MODE
-    except ImportError:
-        NARRATOR_MODE = "template"
-
     if NARRATOR_MODE != "model" or df is None or df.empty:
         return base
     if not spec.group_by and pd.isna(df.iloc[0, -1] if len(df) else None):
@@ -89,8 +105,11 @@ def narrate(question: str, df, spec, window_desc: str) -> str:
         f"\nResult table:\n{df.head(20).to_string(index=False)}"
     )
 
+    # A BoundaryViolation must NOT be caught here: it means we were about to
+    # send a data row to the provider, and that has to surface, not degrade
+    # quietly into template output.
     try:
-        text = chat("narrator", _system(), user_msg, max_tokens=200)
+        text = chat("narrator", SYSTEM, user_msg, max_tokens=200)
     except (ModelUnavailable, ValueError):
         return base
 
@@ -99,7 +118,7 @@ def narrate(question: str, df, spec, window_desc: str) -> str:
         return text
 
     try:
-        retry = chat("narrator", _system(),
+        retry = chat("narrator", SYSTEM,
                      f"{user_msg}\n\nYour previous answer contained numbers that are "
                      f"not in the table: {bad}. Rewrite using ONLY numbers from the table.",
                      max_tokens=200)
@@ -120,22 +139,33 @@ def template(df, spec, window_desc: str) -> str:
     if not spec.group_by:
         label = {"sum_amount": "Total", "count": "Count", "avg_amount": "Average",
                  "max_amount": "Largest", "min_amount": "Smallest"}[spec.metric]
-        return f"{label} for {window_desc}: {_measure(spec, value)}"
+        return f"{label} for {window_desc}: {_measure(spec, value)}."
 
     top = df.iloc[0]
     dim = spec.group_by[0]
     result = (f"Across {len(df)} {LABELS.get(dim, dim + 's')} for {window_desc}, "
-              f"{top[dim]} is highest at {_measure(spec, top[spec.metric])}.")
+              f"{_group_value(dim, top[dim])} is highest at "
+              f"{_measure(spec, top[spec.metric])}.")
     if len(df) > 1:
         second = df.iloc[1]
-        result += f" Followed by {second[dim]} at {_measure(spec, second[spec.metric])}."
+        result += (f" Followed by {_group_value(dim, second[dim])} at "
+                   f"{_measure(spec, second[spec.metric])}.")
     return result
 
 
+def _sentence(text: str) -> str:
+    """Every fragment we append is a new sentence, so the previous one has to be
+    closed. "Rs 1,00,37,55,408 That is up" read as one run-on."""
+    text = text.rstrip()
+    return text if text.endswith((".", "!", "?")) else text + "."
+
+
 def with_comparison(text: str, comp, spec) -> str:
-    """Append the period-over-period sentence."""
+    """Append the period-over-period sentence. Numbers come from the diff the
+    engine computed, never from the model."""
     if comp is None:
         return text
+    text = _sentence(text)
     if not spec.group_by:
         if comp.previous is None or comp.value is None:
             return f"{text} No comparable figure for {comp.window}."
@@ -147,6 +177,7 @@ def with_comparison(text: str, comp, spec) -> str:
     if not movers:
         return f"{text} No overlapping figures for {comp.window}."
     top, key = movers[0], spec.group_by[0]
+    top = {**top, key: _group_value(key, top[key])}
     if top["value"] == 0 and top["previous"]:
         return (f"{text} Compared with {comp.window}, the biggest move is "
                 f"{top[key]}: {inr(abs(top['delta']))} last period, nothing this one.")
@@ -159,7 +190,8 @@ def with_comparison(text: str, comp, spec) -> str:
 
 
 def with_anomalies(text: str, flags) -> str:
-    """Append anomaly callouts."""
+    """Append the callout. The brief asks for this alongside the original
+    answer, not as a separate question."""
     if not flags:
         return text
     joined = "; ".join(f.sentence() for f in flags[:3])

@@ -9,7 +9,7 @@ channel out of each narration ONCE, so the assistant never does text parsing
 at answer time.
 """
 from __future__ import annotations
-import pathlib, sys, time
+import pathlib, string, sys, time
 import duckdb, pandas as pd, yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -91,6 +91,61 @@ def enrich(con, chunk: int = CHUNK) -> dict:
     print(" " * 70, end="\r")
     return {"rows": done, "counterparty_hits": hits,
             "coverage": round(hits / done, 4) if done else 0.0, "by_rule": by_rule}
+
+
+B64_ALPHABET = set(string.ascii_letters + string.digits + "+/=")
+
+
+def looks_encrypted(value: str) -> bool:
+    """Structural: a plaintext account number is digits; ciphertext is base64."""
+    if not value or value.isdigit():
+        return False
+    return not (set(value) - B64_ALPHABET) and len(value) >= 20
+
+
+def mask_account_numbers(con) -> str:
+    """Store account_number ALREADY MASKED, so the full number never lands in
+    the analytical store at all.
+
+    Masking at query time cannot work once the column is encrypted: the last
+    four characters of a base64 ciphertext are not the last four digits of the
+    account. Decrypt here, keep only the last four, discard the rest -- there is
+    no later step that needs more than that.
+    """
+    sample = con.execute("SELECT account_number FROM account "
+                         "WHERE account_number IS NOT NULL LIMIT 1").fetchone()
+    if not sample:
+        return "no accounts"
+
+    plain = [str(r[0]) for r in con.execute(
+        "SELECT account_number FROM account WHERE account_number IS NOT NULL").fetchall()]
+    mode = "plaintext"
+    if looks_encrypted(str(sample[0])):
+        # No blanket except here. A failed decrypt would silently mask the
+        # CIPHERTEXT instead, producing "XXXXXX" plus four base64 characters
+        # that look like an account number and are not.
+        from app.crypto import decrypt, CryptoNotConfigured
+        try:
+            plain = [decrypt(v) or "" for v in plain]
+            mode = "decrypted"
+        except CryptoNotConfigured:
+            # No key: store a full redaction. Never a mask built from
+            # ciphertext -- "XXXXXX" plus four base64 characters looks like an
+            # account number and means nothing, which is worse than showing
+            # nothing because it invites the reader to trust it.
+            con.execute("UPDATE account SET account_number = '[encrypted]'")
+            return "no key -- fully redacted"
+
+    ids = [r[0] for r in con.execute(
+        "SELECT account_id FROM account WHERE account_number IS NOT NULL").fetchall()]
+    masked = pd.DataFrame({"account_id": ids,
+                           "masked": ["XXXXXX" + str(v)[-4:] for v in plain]})
+    con.register("masked_df", masked)
+    con.execute("""UPDATE account SET account_number = (
+                     SELECT masked FROM masked_df m WHERE m.account_id = account.account_id)
+                   WHERE account_id IN (SELECT account_id FROM masked_df)""")
+    con.unregister("masked_df")
+    return mode
 
 
 def canonicalise(con) -> int:
@@ -180,6 +235,7 @@ def main():
         n = con.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
         print(f"  {t:12} {n:>12,} rows")
 
+    mask_mode = mask_account_numbers(con)
     stats = enrich(con)
     n_canon = canonicalise(con)
     build_view(con)
@@ -198,6 +254,7 @@ def main():
     for c, n in cats:
         print(f"  {c:16} {n:>10,}")
     print(f"canonicalised {n_canon} truncated vendor names into their full form")
+    print(f"account numbers: {mask_mode}; only the last-4 mask is stored")
     total = con.execute("SELECT COUNT(*) FROM txn_enriched").fetchone()[0]
     print(f"\nanomaly detection: {nstats:,} counterparties with enough history, "
           f"{nflags:,} flagged rows ({100*nflags/max(total,1):.2f}%)")

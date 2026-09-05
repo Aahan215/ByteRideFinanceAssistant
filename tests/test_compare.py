@@ -89,3 +89,16 @@ def test_equal_length_comparison_is_not_flagged(monkeypatch):
     warnings = []
     _compare(spec, pd.DataFrame({"sum_amount": [1.0]}), warnings)
     assert not any("differ in length" in w for w in warnings)
+
+
+def test_nan_aggregates_do_not_crash_the_request():
+    """`NaN or 0` returns NaN because NaN is truthy, and int(NaN) raises. An
+    aggregate over zero excluded rows comes back as NaN, so this fired on any
+    question whose breakdown excluded nothing -- a 500, not a wrong answer."""
+    import numpy as np
+    from app.api import _num
+    assert _num(np.nan) == 0.0
+    assert _num(None) == 0.0
+    assert _num(float("nan")) == 0.0
+    assert _num(42.5) == 42.5
+    assert int(_num(np.nan)) == 0

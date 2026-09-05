@@ -9,7 +9,9 @@ import { EvidencePanel } from './EvidencePanel'         // ({ answer }: { answer
 import { AnswerChart } from './Charts'                  // ({ answer }: { answer: Answer })
 import './chat.css'
 
-export function MessageCard({ message }: { message: Message }) {
+export function MessageCard(
+  { message, onAsk }: { message: Message; onAsk?: (q: string) => void },
+) {
   if (message.role === 'user') {
     return (
       <div className="msg-row msg-row--user">
@@ -48,6 +50,21 @@ export function MessageCard({ message }: { message: Message }) {
     <div className="msg-row msg-row--assistant">
       <div className={`bubble bubble--answer${answer.refused ? ' bubble--refused' : ''}`}>
         <p className="answer-text">{answer.answer}</p>
+
+        {/* A clarification is a question back to the user, so give them the
+            options as one-click follow-ups rather than making them retype. */}
+        {answer.clarification && !!answer.suggestions?.length && (
+          <div className="clarify">
+            <div className="clarify-options">
+              {answer.suggestions.map(s => (
+                <button key={s} className="clarify-option"
+                        onClick={() => onAsk?.(s)} disabled={!onAsk}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="meta-row">
           {answer.window && <span className="window-chip">{answer.window}</span>}

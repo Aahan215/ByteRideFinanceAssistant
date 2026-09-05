@@ -1,7 +1,7 @@
 /* Design tokens. Every component reads these -- no hard-coded colours anywhere,
    so light/dark stays consistent across components written independently. */
 :root {
-  --bg: #f6f7f9; --panel: #ffffff; --panel-2: #fbfbfc;
+  --bg: #f0f2f5; --panel: #ffffff; --panel-2: #fafbfc;
   --ink: #15181d; --muted: #6b7280; --line: #e4e7ec;
   --accent: #1f6feb; --accent-soft: #eaf1fe;
   --warn: #8a5a00; --warn-bg: #fff7e6;
@@ -11,11 +11,18 @@
   --c5: #0e8ea3; --c6: #c0392b; --c7: #6b7280; --c8: #a1428f;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --radius: 12px;
+  /* from origin/feature (Aahan): a dedicated error tone, an accent hover, and
+     elevation. Cards were flat with a border only, which reads as unfinished. */
+  --accent-hover: #1d4ed8;
+  --error: #991b1b; --error-bg: #fef2f2;
+  --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
+  --shadow-lg: 0 4px 12px rgba(0,0,0,.10), 0 2px 4px rgba(0,0,0,.06);
+  --gradient: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0f1115; --panel: #171a21; --panel-2: #1c2029;
+    --bg: #0c0e14; --panel: #161922; --panel-2: #1c2029;
     --ink: #e8eaed; --muted: #98a2b3; --line: #262b35;
     --accent: #6aa5ff; --accent-soft: #16263f;
     --warn: #e0b25a; --warn-bg: #2a2110;
@@ -23,13 +30,17 @@
     --pos: #4ec99a; --neg: #ef7d6d;
     --c1: #6aa5ff; --c2: #4ec99a; --c3: #e0b25a; --c4: #b18cf0;
     --c5: #52c5db; --c6: #ef7d6d; --c7: #98a2b3; --c8: #e08ac9;
+    --accent-hover: #7da8ff;
+    --error: #fca5a5; --error-bg: #2a1515;
+    --shadow: 0 1px 3px rgba(0,0,0,.3);
+    --shadow-lg: 0 4px 12px rgba(0,0,0,.4);
   }
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
-  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 table { border-collapse: collapse; width: 100%; }

@@ -7,10 +7,12 @@ const LABEL: Record<Confidence, string> = {
   'n/a': 'Confidence n/a',
 }
 
-const TONE: Record<Confidence, 'info' | 'warn' | 'muted'> = {
+// Low gets its own tone. Sharing the warning colour made "medium" and "low"
+// visually identical, which defeats the point of grading confidence at all.
+const TONE: Record<Confidence, 'info' | 'warn' | 'error' | 'muted'> = {
   high: 'info',
   medium: 'warn',
-  low: 'warn',
+  low: 'error',
   'n/a': 'muted',
 }
 

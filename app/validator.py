@@ -16,6 +16,9 @@ class Verdict:
     ok: bool
     refusal: str | None = None
     clarification: str | None = None
+    # The actual options, so the UI can offer them instead of making the user
+    # retype. A clarification without choices is just a refusal with extra words.
+    candidates: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     repaired: QuerySpec | None = None
 
@@ -67,8 +70,20 @@ def resolve_counterparty(value: str, known: list[str]
 
     index = {normalise(k): k for k in known}
 
-    # 1. exact, on the normalised key
+    # 1. exact, on the normalised key -- but an exact match on a SHORT name
+    #    that several longer names extend is not decisive. "RAJESH" exists (a
+    #    truncated narration) and is also the start of RAJESH AGARWAL, RAJESH
+    #    BHATT, RAJESH CHATTERJEE. Someone asking for "Rajesh" almost certainly
+    #    means one of those, so ask rather than silently pick the stub.
     if v in index:
+        toks = v.split()
+        ext = [orig for norm, orig in index.items()
+               if norm != v and norm.split()[:len(toks)] == toks]
+        if len(ext) > 1 and len({index_norm.split()[len(toks)]
+                                 for index_norm in
+                                 (n for n in index if n != v
+                                  and n.split()[:len(toks)] == toks)}) > 1:
+            return None, sorted([index[v]] + ext)[:5], "ambiguous"
         return index[v], [], "exact"
 
     # 2. every word the user gave appears in the vendor name. This is the case
@@ -138,8 +153,8 @@ def validate(spec: QuerySpec) -> Verdict:
         if resolved is None:
             if candidates:
                 return Verdict(False, clarification=(
-                    f"I have several vendors matching '{value}': "
-                    f"{', '.join(candidates)}. Which did you mean?"))
+                    f"I have several vendors matching '{value}'. Which did you mean?"),
+                    candidates=candidates)
             return Verdict(False, refusal=
                            f"I have no vendor matching '{value}' in this dataset.")
         repaired.filters.counterparty = resolved
@@ -171,7 +186,8 @@ def validate(spec: QuerySpec) -> Verdict:
             setattr(repaired.filters, dim, near[0])
             warnings.append(f"Interpreted {dim} '{value}' as '{near[0]}'.")
         elif near:
-            return Verdict(False, clarification=f"Did you mean {', '.join(near)}?")
+            return Verdict(False, clarification=f"Did you mean one of these?",
+                           candidates=near)
         else:
             return Verdict(False, refusal=f"I have no {dim} matching '{value}' in this dataset.")
 

@@ -15,7 +15,7 @@ import {
   Legend,
 } from 'recharts'
 import type { Answer } from '../types'
-import { inr } from '../api'
+import { inr , formatCell } from '../api'
 import './charts.css'
 
 type Row = Record<string, string | number | null>
@@ -175,7 +175,7 @@ function TrendLineChart({
       <ResponsiveContainer width="100%" height={260}>
         <LineChart data={rows} margin={{ top: 8, right: 16, left: 4, bottom: 4 }}>
           <CartesianGrid stroke={line} strokeDasharray="3 3" vertical={false} />
-          <XAxis dataKey={dimKey} tickFormatter={(v) => truncateLabel(v)} stroke={muted} tick={tickStyle} />
+          <XAxis dataKey={dimKey} tickFormatter={(v) => truncateLabel(formatCell(dimKey, v))} stroke={muted} tick={tickStyle} />
           <YAxis
             tickFormatter={(v: number) => formatMeasure(measureKey, v)}
             stroke={muted}
@@ -284,7 +284,7 @@ function RankedBarChart({
           <YAxis
             type="category"
             dataKey={dimKey}
-            tickFormatter={(v) => truncateLabel(v)}
+            tickFormatter={(v) => truncateLabel(formatCell(dimKey, v))}
             stroke={muted}
             tick={tickStyle}
             width={110}
