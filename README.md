@@ -11,6 +11,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python scripts/load_data.py  # falls back to data/sample/seed.sql until the
                              # organisers' CSVs land in data/raw/
+python scripts/schema_check.py   # verify the load matches the data dictionary
 uvicorn app.api:app --reload      # UI at http://localhost:8000
 ```
 

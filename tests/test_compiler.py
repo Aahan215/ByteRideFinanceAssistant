@@ -88,3 +88,19 @@ def test_evidence_rows_match_the_aggregate_row_set():
     ev, _ = compile_evidence_sql(spec, ANCHOR)
     assert "counterparty IS NOT NULL" in agg
     assert "counterparty IS NOT NULL" in ev
+
+
+def test_data_dictionary_types_are_forced_not_inferred():
+    """account_number is VARCHAR(20) of digits. CSV inference reads it as
+    BIGINT, which drops leading zeros and changes type again once the column
+    arrives encrypted."""
+    from app.data_dictionary import duckdb_types, declared
+    assert declared()["account"]["account_number"] == "VARCHAR"
+    assert duckdb_types("account")["account_number"] == "VARCHAR"
+    assert duckdb_types("transaction")["transaction_date"] == "TIMESTAMP"
+    assert duckdb_types("transaction")["transaction_amount"].startswith("DECIMAL")
+
+
+def test_every_dictionary_table_is_known_to_the_loader():
+    from app.data_dictionary import declared
+    assert set(declared()) == {"bank", "account", "transaction"}

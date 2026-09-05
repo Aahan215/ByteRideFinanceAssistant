@@ -14,7 +14,8 @@ import duckdb, pandas as pd, yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from app.enrich import parse   # noqa: E402
+from app.enrich import parse                    # noqa: E402
+from app.data_dictionary import duckdb_types    # noqa: E402
 
 RAW, SAMPLE, DB = ROOT / "data" / "raw", ROOT / "data" / "sample", ROOT / "data" / "finance.duckdb"
 SEMANTIC = yaml.safe_load((ROOT / "schema" / "semantic_layer.yaml").read_text())
@@ -25,7 +26,14 @@ def load_source(con) -> str:
     csvs = {t: RAW / f"{t}.csv" for t in TABLES}
     if all(p.exists() for p in csvs.values()):
         for t, p in csvs.items():
-            con.execute(f'CREATE OR REPLACE TABLE "{t}" AS SELECT * FROM read_csv_auto(?)', [str(p)])
+            # Force the declared types. CSV inference reads the all-digit
+            # account_number as BIGINT, which drops leading zeros and changes
+            # type again once the column arrives encrypted.
+            types = duckdb_types(t)
+            cols = ", ".join(f"'{c}': '{ty}'" for c, ty in types.items())
+            spec = f", columns={{{cols}}}" if cols else ""
+            con.execute(f'CREATE OR REPLACE TABLE "{t}" AS '
+                        f"SELECT * FROM read_csv('{p}', header=true{spec})")
         return "data/raw CSVs"
     seed = SAMPLE / "seed.sql"
     if seed.exists():

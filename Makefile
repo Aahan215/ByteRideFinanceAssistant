@@ -1,4 +1,4 @@
-.PHONY: setup load test eval run demo checksum clean model-build model-check data-local data-prod bench
+.PHONY: setup load test eval run demo checksum clean model-build model-check data-local data-prod bench schema-check
 
 setup:
 	python3 -m venv .venv
@@ -8,6 +8,10 @@ setup:
 
 load:
 	./.venv/bin/python scripts/load_data.py
+	$(MAKE) schema-check
+
+schema-check:
+	./.venv/bin/python scripts/schema_check.py
 
 test:
 	./.venv/bin/python -m pytest tests/ -q
