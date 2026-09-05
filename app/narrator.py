@@ -3,14 +3,13 @@ from __future__ import annotations
 from app.validator import numeric_guard
 
 
-# Plain "{:,.2f}" formatting disagrees with the en-IN grouping the UI uses, so
-# the same figure appears two different ways on one screen.
 def inr(x) -> str:
+    """Format a number as Indian-style comma-separated string with ₹ prefix."""
     if x is None:
         return "-"
     neg, n = x < 0, abs(round(float(x)))
     s = str(n)
-    if len(s) > 3:                       # 2,02,07,329 -- last 3, then pairs
+    if len(s) > 3:
         head, tail = s[:-3], s[-3:]
         parts = []
         while len(head) > 2:
@@ -21,7 +20,6 @@ def inr(x) -> str:
     return f"{'-' if neg else ''}\u20b9{s}"
 
 
-# "counterpartys" is not a word, and it appears on screen next to real numbers.
 LABELS = {"counterparty": "vendors", "category": "categories", "channel": "channels",
           "bank_name": "banks", "month": "months", "quarter": "quarters",
           "transaction_type": "transaction types", "account_id": "accounts",
@@ -31,7 +29,12 @@ LABELS = {"counterparty": "vendors", "category": "categories", "channel": "chann
 def _measure(spec, value) -> str:
     return f"{int(value):,}" if spec.metric == "count" else inr(value)
 
-SYSTEM = """You are a finance assistant narrator. You explain query results in plain English.
+
+def _system() -> str:
+    import datetime
+    today = datetime.date.today().isoformat()
+    return f"""You are a finance assistant narrator. You explain query results in plain English.
+Today's date is {today}.
 
 STRICT RULES:
 1. Use ONLY numbers that appear exactly in the data table below. Never round, estimate, or calculate.
@@ -51,6 +54,9 @@ FORMAT:
 """
 
 
+SYSTEM = _system()
+
+
 def narrate(question: str, df, spec, window_desc: str) -> str:
     """Phrase the answer.
 
@@ -58,15 +64,16 @@ def narrate(question: str, df, spec, window_desc: str) -> str:
     leaves the process. NARRATOR_MODE=model has the model phrase it instead,
     which means sending the aggregate result table to the provider -- a
     deliberate choice, not a default, now the provider is third-party.
-
-    When the model does write the prose, every number in it must appear in the
-    result set. If not, we tell the model exactly which numbers were invented
-    and let it try once more; a second failure falls back to the template.
     """
     import pandas as pd
-    from app.boundary import NARRATOR_MODE
 
     base = template(df, spec, window_desc)
+
+    try:
+        from app.boundary import NARRATOR_MODE
+    except ImportError:
+        NARRATOR_MODE = "template"
+
     if NARRATOR_MODE != "model" or df is None or df.empty:
         return base
     if not spec.group_by and pd.isna(df.iloc[0, -1] if len(df) else None):
@@ -82,11 +89,8 @@ def narrate(question: str, df, spec, window_desc: str) -> str:
         f"\nResult table:\n{df.head(20).to_string(index=False)}"
     )
 
-    # A BoundaryViolation must NOT be caught here: it means we were about to
-    # send a data row to the provider, and that has to surface, not degrade
-    # quietly into template output.
     try:
-        text = chat("narrator", SYSTEM, user_msg, max_tokens=200)
+        text = chat("narrator", _system(), user_msg, max_tokens=200)
     except (ModelUnavailable, ValueError):
         return base
 
@@ -95,7 +99,7 @@ def narrate(question: str, df, spec, window_desc: str) -> str:
         return text
 
     try:
-        retry = chat("narrator", SYSTEM,
+        retry = chat("narrator", _system(),
                      f"{user_msg}\n\nYour previous answer contained numbers that are "
                      f"not in the table: {bad}. Rewrite using ONLY numbers from the table.",
                      max_tokens=200)
@@ -129,8 +133,7 @@ def template(df, spec, window_desc: str) -> str:
 
 
 def with_comparison(text: str, comp, spec) -> str:
-    """Append the period-over-period sentence. Numbers come from the diff the
-    engine computed, never from the model."""
+    """Append the period-over-period sentence."""
     if comp is None:
         return text
     if not spec.group_by:
@@ -156,8 +159,7 @@ def with_comparison(text: str, comp, spec) -> str:
 
 
 def with_anomalies(text: str, flags) -> str:
-    """Append the callout. The brief asks for this alongside the original
-    answer, not as a separate question."""
+    """Append anomaly callouts."""
     if not flags:
         return text
     joined = "; ".join(f.sentence() for f in flags[:3])

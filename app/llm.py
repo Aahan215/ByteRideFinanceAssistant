@@ -190,9 +190,6 @@ def chat(role: str, system: str, user: str, *, temperature: float | None = None,
     choice = (data.get("choices") or [{}])[0]
     content = (choice.get("message") or {}).get("content")
     if not content:
-        # Gemini models emit reasoning tokens that count against max_tokens, so
-        # a budget that looks generous can be spent entirely on thinking and
-        # return empty content with finish_reason "length".
         raise ModelUnavailable(
             f"{model} returned no content (finish_reason="
             f"{choice.get('finish_reason')!r}). Raise max_tokens: reasoning "

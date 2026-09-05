@@ -313,13 +313,19 @@ class CoercionError(ValueError):
 
 
 def _prompt() -> str:
+    import datetime
+    today = datetime.date.today().isoformat()
     return f"""You are a JSON converter. Convert a finance question into a QuerySpec JSON object.
 Reply with ONLY a JSON object. No text before or after.
+
+Today's date is {today}. Use this to understand relative references like "this month" or "last week", but NEVER emit date_range — dates are handled separately by the system.
 
 RULES:
 - NEVER compute numbers or invent data.
 - NEVER emit date_range. Dates are handled separately.
+- NEVER copy vendor/counterparty names from examples. Extract the EXACT name the user typed.
 - Tax, fees, charges = CATEGORIES, not vendors.
+- "EMI" before a name means category EMI_LOAN + counterparty = the name after EMI.
 - "spend"/"paid"/"payouts" = dataset "payouts" (debits).
 - "received"/"credits"/"income" = dataset "receipts" (credits).
 - "where did I spend the most" = group_by ["counterparty"] on payouts.
@@ -355,8 +361,11 @@ Q: Total tax paid in the last 3 months
 Q: How many UPI payments did I make?
 {{"dataset":"payouts","metric":"count","group_by":[],"filters":{{"channel":"UPI"}}}}
 
-Q: What did I pay Reliance Digital?
-{{"dataset":"payouts","metric":"sum_amount","group_by":[],"filters":{{"counterparty":"Reliance Digital"}}}}
+Q: What did I pay Bajaj Finance?
+{{"dataset":"payouts","metric":"sum_amount","group_by":[],"filters":{{"counterparty":"Bajaj Finance"}}}}
+
+Q: How much did we pay EMI to HDFC Home Loans?
+{{"dataset":"payouts","metric":"sum_amount","group_by":[],"filters":{{"counterparty":"HDFC Home Loans","category":"EMI_LOAN"}}}}
 
 Q: Break my spending down by category
 {{"dataset":"payouts","metric":"sum_amount","group_by":["category"],"filters":{{}}}}
@@ -396,6 +405,15 @@ Q: What will be my balance next month?
 
 Q: How many employees do we have?
 {{"unsupported_reason":"I only have financial transaction data; no employee or HR information available."}}
+
+Q: What do you think about this vendor?
+{{"unsupported_reason":"I can show you transaction data for a vendor — try asking 'how much did we pay [vendor name]?' or 'show transactions for [vendor name]'."}}
+
+Q: Tell me about Vikram Farooq
+{{"dataset":"transactions","metric":"sum_amount","group_by":[],"filters":{{"counterparty":"Vikram Farooq"}}}}
+
+Q: Why is this amount so high?
+{{"unsupported_reason":"I cannot explain why amounts are high or low. I can show you the breakdown — try 'break down spending by category' or 'show top transactions'."}}
 """
 
 
@@ -436,6 +454,9 @@ FOLLOWUP_HINTS = (
     " that ", " that?", " those ", " those?", " it ", " it?",
     "instead", "but for", "but with", "just show", "just the",
     "only the", "narrow", "drill", "break it", "break that", "what if",
+    "pay him", "pay her", "pay them", "paid him", "paid her",
+    "paid them", "from them", "from him", "from her",
+    "how much was", "how many were",
 )
 
 
@@ -594,8 +615,13 @@ def _call(chat_fn: ChatFn | None, system: str, user: str, temperature: float | N
           schema: dict | None = None) -> dict:
     if chat_fn is not None:                 # tests inject a stand-in
         return chat_fn("planner", system, user, temperature=temperature)
-    return chat_json("planner", system, user, temperature=temperature,
-                     schema=schema or planner_schema())
+    try:
+        return chat_json("planner", system, user, temperature=temperature,
+                         schema=schema or planner_schema())
+    except ValueError:
+        return {"unsupported_reason": "I couldn't understand that question. "
+                "Try asking something specific like 'how much did we pay [name]?' "
+                "or 'show transactions for [name]'."}
 
 
 def plan_detailed(question: str, prior: QuerySpec | None = None, *,
@@ -615,6 +641,10 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
         raw = _call(chat_fn, REFINE_PROMPT % describe_spec(prior), question,
                     temperature, schema=refine_schema())
         attempts.append(json.dumps(raw)[:400])
+        if raw.get("unsupported_reason") and "couldn't understand" in raw.get("unsupported_reason", ""):
+            # _call returned our ValueError fallback — the model couldn't produce JSON.
+            # For a follow-up, just reuse the prior spec (dates will be updated below).
+            raw = {}
         try:
             # Legacy patch shape (tests, and any model that ignores the
             # sentinel vocabulary) still merges the old way.
@@ -644,7 +674,7 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
         attempts.append(json.dumps(raw)[:400])
         try:
             spec = QuerySpec(**coerce(raw))
-        except (ValidationError, CoercionError) as e:
+        except (ValidationError, CoercionError, ValueError) as e:
             # One repair round-trip with the actual error, then give up honestly.
             raw2 = _call(chat_fn, _prompt(),
                          f"{question}\n\nYour previous reply was invalid:\n{e}\n"
@@ -652,7 +682,7 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
             attempts.append(json.dumps(raw2)[:400])
             try:
                 spec = QuerySpec(**coerce(raw2))
-            except (ValidationError, CoercionError):
+            except (ValidationError, CoercionError, ValueError):
                 return PlanResult(
                     QuerySpec(dataset="transactions",
                               unsupported_reason="I could not turn that into a query I trust. "
