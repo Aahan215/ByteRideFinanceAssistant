@@ -190,10 +190,25 @@ def health():
     return {"ok": True, "anchor_date": str(anchor_date())}
 
 
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+DIST = ROOT / "frontend" / "dist"
+
+
 @app.get("/", include_in_schema=False)
 def index():
+    """Serve the built React app when it exists, else the no-build fallback page.
+
+    The fallback matters: if npm breaks on the demo machine at hour 20, the
+    single-file UI still works from a clean clone.
+    """
     from fastapi.responses import FileResponse
-    return FileResponse(pathlib.Path(__file__).resolve().parent.parent / "ui" / "index.html")
+    built = DIST / "index.html"
+    return FileResponse(built if built.exists() else ROOT / "ui" / "index.html")
+
+
+if DIST.exists():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 
 
 STUB = os.getenv("FINANCE_STUB_PLANNER") == "1"

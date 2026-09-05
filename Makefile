@@ -73,3 +73,13 @@ eval-compare:
 	@for m in qwen2.5:3b llama3.2:3b qwen2.5:7b; do \
 		./.venv/bin/python evals/run_evals.py --model $$m --out evals/report-$$m.md || true; \
 	done
+
+# --- frontend ---
+ui-install:
+	cd frontend && npm install --no-audit --no-fund
+
+ui-dev:
+	cd frontend && npm run dev      # :5173, proxies the API to :8765
+
+ui-build:
+	cd frontend && npm run build    # FastAPI then serves frontend/dist at /
