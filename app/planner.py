@@ -847,6 +847,27 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
     if dr is not None:
         spec = spec.model_copy(update={"date_range": dr})
 
+    # THE ALLOWLIST. Every content word in the question must map to something
+    # this system can express. Constrained decoding cannot say "I can't", so
+    # a question about a discount comes back as a valid top-vendors spec --
+    # a different question, answered confidently. Anything unaccounted for
+    # here is a concept nobody can express, so refuse and NAME it.
+    from app.coverage import unresolved
+    spec_terms = [v for v in (spec.filters.counterparty,
+                              spec.filters.description_contains,
+                              spec.filters.bank_name) if v]
+    if isinstance(spec.filters.counterparty, list):
+        spec_terms = list(spec.filters.counterparty) + spec_terms[1:]
+    missing = unresolved(question, spec_terms)
+    if missing and not used_patch:
+        named = ", ".join(f"'{m}'" for m in missing[:3])
+        return PlanResult(
+            QuerySpec(dataset=spec.dataset, unsupported_reason=(
+                f"I have no data about {named}. I can answer about spending and "
+                f"income by vendor, category, channel, bank and period -- ask me "
+                f"about one of those and I will show the transactions behind it.")),
+            confidence="high", attempts=attempts, date_source="n/a")
+
     return PlanResult(spec, date_source="deterministic" if dr else "default",
                       matched_date_text=matched, attempts=attempts, used_patch=used_patch)
 

@@ -10,9 +10,25 @@ export function ScopePicker(
   { value, onChange }: { value: ScopeOption; onChange: (s: ScopeOption) => void },
 ) {
   const [all, setAll] = useState<Scopes | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
 
-  useEffect(() => { fetchScopes().then(setAll).catch(() => setAll(null)) }, [])
-  if (!all) return null
+  useEffect(() => {
+    fetchScopes().then(setAll).catch(e => setFailed(String(e)))
+  }, [])
+
+  // A control that disappears on error is indistinguishable from a control
+  // that was never built -- render the failure instead of vanishing.
+  if (!all && !failed) return null
+  if (!all) {
+    return (
+      <label className="scope" title={failed ?? ''}>
+        <span className="scope-label">Viewing</span>
+        <select disabled defaultValue="">
+          <option value="">Scope unavailable</option>
+        </select>
+      </label>
+    )
+  }
 
   const options: ScopeOption[] = [all.all, ...all.entities, ...all.accounts]
   const key = (s: ScopeOption) => `${s.level}:${s.value ?? ''}`

@@ -94,4 +94,8 @@ def etl_status() -> dict:
             "Run `make load` (about 40s at 2M rows) before asking questions.")
         return {"ready": ready, "problems": problems, "hint": hint}
     except Exception as e:
-        return {"ready": False, "problems": [str(e)], "hint": None}
+        # Unlike the missing-derived-objects case above, the DB never opened,
+        # so "source tables present" would be a lie -- give a different hint.
+        return {"ready": False, "problems": [str(e)], "hint": (
+            "No queryable database at data/finance.duckdb. Put the source "
+            "CSVs in data/raw/ and run `make load`.")}

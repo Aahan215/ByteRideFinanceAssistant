@@ -8,8 +8,11 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    // Every backend route must be listed here -- a path missing from this list
+    // isn't a 404, Vite serves index.html for it with a 200, so the failure
+    // surfaces as a component that silently renders nothing (see ScopePicker).
     proxy: Object.fromEntries(
-      ['/ask', '/ask_spec', '/health', '/export', '/efficiency'].map(p => [p, API]),
+      ['/ask', '/ask_spec', '/health', '/scopes', '/export', '/efficiency', '/boundary'].map(p => [p, API]),
     ),
   },
   build: { outDir: 'dist', emptyOutDir: true },
