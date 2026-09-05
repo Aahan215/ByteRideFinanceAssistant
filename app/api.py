@@ -137,6 +137,15 @@ def answer_spec(spec: QuerySpec, question: str = "", scope=None) -> Answer:
                     f"transactions has a {spec.group_by[0]} we could not extract "
                     f"from the narration, so it is missing from this breakdown.")
 
+    if spec.filters.exclude_categories:
+        pretty = ", ".join(c.lower().replace("_", " ")
+                           for c in spec.filters.exclude_categories)
+        warnings.append(
+            f"Showing discretionary spending only. {pretty.capitalize()} are "
+            f"commitments rather than choices this month, and investments are "
+            f"saving rather than spending, so they are excluded from this "
+            f"breakdown. This is what you spent, not a recommendation.")
+
     comparison = None
     before = len(warnings)
     if spec.compare_to is not None:

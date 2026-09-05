@@ -212,3 +212,27 @@
 }
 .clarify-option:hover:not(:disabled) { background: var(--accent); color: #fff; }
 .clarify-option:disabled { opacity: .6; cursor: default; }
+
+/* --- ported from origin/feature: elevation, entrance motion, and a distinct
+   error tone for low confidence (it previously shared the warning colour, so
+   "medium" and "low" looked identical) --- */
+.bubble--answer, .bubble--notice, .bubble--pending { box-shadow: var(--shadow); }
+.bubble--user { box-shadow: var(--shadow); }
+
+.bubble { animation: fadeUp .25s ease; }
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bubble { animation: none; }
+}
+
+.confidence-badge--warn { color: var(--warn); background: var(--warn-bg); }
+.confidence-badge--error { color: var(--error); background: var(--error-bg); }
+
+/* A left rule makes the kind of note readable at a glance. */
+.callout--warning { border-left: 3px solid var(--warn); }
+.callout--anomaly { border-left: 3px solid var(--accent); }
+
+.clarify-option:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }

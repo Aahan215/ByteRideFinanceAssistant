@@ -41,6 +41,10 @@ def _where(spec: QuerySpec, date_col: str, amount_col: str,
         elif field == "reference_id":
             # DECISIONS.md #2 -- a bare "ref no" hits the plaintext column.
             where.append(f"{REF_DEFAULT} = ?"); params.append(value)
+        elif field == "exclude_categories":
+            if value:
+                where.append(f"category NOT IN ({', '.join('?' * len(value))})")
+                params.extend(str(v) for v in value)
         elif field == "description_contains":
             where.append("description ILIKE ?"); params.append(f"%{value}%")
         elif field == "counterparty":

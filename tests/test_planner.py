@@ -366,3 +366,34 @@ def test_a_normal_grouping_is_untouched():
                           "dataset": "payouts", "metric": "sum_amount",
                           "group_by": ["counterparty"], "filters": {}})
     assert r.spec.group_by == ["counterparty"]
+
+
+def test_a_savings_question_shows_discretionary_spend_only():
+    """"Where should I control the spend?" ranked EMI, LIC premium and
+    investments as things to cut. Those are commitments, and an investment is
+    saving rather than spending -- listing them implies you could just stop."""
+    from app.planner import wants_savings_view
+    assert wants_savings_view("if i was to do some savings, where should i control the spend?")
+    assert wants_savings_view("where can I save this month?")
+    assert wants_savings_view("what should I cut back on?")
+    assert not wants_savings_view("how much did I spend this month?")
+
+    r = plan_detailed("where should i control the spend this month?",
+                      chat_fn=lambda *a, **k: {"dataset": "payouts",
+                                               "metric": "sum_amount",
+                                               "group_by": ["counterparty"]})
+    assert r.spec.group_by == ["category"]
+    excluded = r.spec.filters.exclude_categories or []
+    for c in ("EMI_LOAN", "RENT", "INSURANCE", "INVESTMENT", "TAX"):
+        assert c in excluded, c
+
+
+def test_the_savings_view_excludes_commitments_in_sql():
+    from app.compiler import compile_sql
+    from app.spec import QuerySpec, Filters
+    import datetime
+    spec = QuerySpec(dataset="payouts", group_by=["category"],
+                     filters=Filters(exclude_categories=["TAX", "EMI_LOAN"]))
+    sql, params, _ = compile_sql(spec, datetime.date(2026, 6, 30))
+    assert "category NOT IN (?, ?)" in sql
+    assert "TAX" in params and "EMI_LOAN" in params

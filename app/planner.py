@@ -327,6 +327,20 @@ def wants_trend(question: str) -> bool:
     return bool(TREND_RE.search(question))
 
 
+# "Where can I save?" / "what should I cut?" is advice-shaped. We do not give
+# advice -- but the factual answer underneath it is a breakdown of the spending
+# that is actually discretionary. Ranking EMI and rent alongside groceries
+# implies you could just stop paying them, and INVESTMENT is saving, not spend.
+SAVINGS_RE = re.compile(
+    r"\b(sav(e|ing|ings)|cut back|cut down|cut my|control (the )?spend\w*|"
+    r"reduce (my )?spend\w*|spend less|trim|tighten|where can i save|"
+    r"what should i cut)\b", re.I)
+
+
+def wants_savings_view(question: str) -> bool:
+    return bool(SAVINGS_RE.search(question))
+
+
 def dataset_from_words(question: str) -> str | None:
     """Only fires on an explicit cue, so a follow-up that says nothing about
     direction leaves the prior dataset alone."""
@@ -800,6 +814,13 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
     if pinned:
         spec = spec.model_copy(update={
             "group_by": [d for d in spec.group_by if d not in pinned]})
+
+    # A savings question is really "what of my spending is discretionary".
+    # Answer that factually and say what was left out; do not recommend cuts.
+    if wants_savings_view(question) and not spec.filters.category:
+        committed = SEMANTIC.get("committed_categories", [])
+        spec = spec.model_copy(update={"dataset": "payouts", "group_by": ["category"]})
+        spec.filters.exclude_categories = committed
 
     # A trend question is about time. If nothing meaningful is left to group by,
     # group by month -- that is what "trend" means.

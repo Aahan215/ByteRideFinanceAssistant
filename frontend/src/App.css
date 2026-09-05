@@ -24,3 +24,12 @@
   background: var(--warn-bg);
   color: var(--warn);
 }
+
+/* --- elevation and motion, ported from origin/feature --- */
+.topbar { box-shadow: var(--shadow); z-index: 10; }
+.topbar h1 {
+  background: var(--gradient);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.empty h2 { font-size: 24px; letter-spacing: -.02em; }

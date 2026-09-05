@@ -87,6 +87,12 @@ reference_columns:
   default: transaction_reference_id
   explicit_utr: utr_number
 
+# Money you cannot simply choose to spend less of this month. Used when someone
+# asks where they could save: ranking EMI, rent, insurance and tax alongside
+# groceries is misleading, and INVESTMENT is saving, not spending at all.
+committed_categories: [TAX, EMI_LOAN, RENT, INSURANCE, INVESTMENT,
+                       INTEREST, BANK_CHARGES, SALARY]
+
 spend_categories: [TAX, BANK_CHARGES, INTEREST, EMI_LOAN, SALARY, UTILITIES,
                    INSURANCE, INVESTMENT, CASH, CHEQUE, RENT,
                    # derived from the MERCHANT rather than the narration keywords
