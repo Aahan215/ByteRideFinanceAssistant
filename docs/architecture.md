@@ -25,7 +25,7 @@ flowchart TD
     PLANNER -->|"self-consistency sample<br/>(N samples, config/models.yaml: confidence.samples)"| CONF{Planner confidence<br/>high / medium / low}
 
     CONF -->|high or medium| SPEC[QuerySpec<br/>app/spec.py]
-    CONF -->|"low<br/>(planner samples disagree)"| ESCALATE["Router / escalation<br/>role: escalate = qwen3:8b via Ollama<br/>re-plan the same question on a<br/>genuinely larger model<br/><i>in progress — see note below</i>"]
+    CONF -->|"low<br/>(planner samples disagree)"| ESCALATE["Escalation<br/>role: escalate = qwen3:8b via Ollama<br/>re-plan the same question on a<br/>larger model (implemented)"]
     ESCALATE --> SPEC
 
     SPEC --> VALIDATOR["Validator<br/>app/validator.py<br/>fuzzy-matches vendor/category names,<br/>rejects what the schema can't express"]
@@ -57,17 +57,13 @@ flowchart TD
     BOUNDARY["Boundary audit<br/>app/boundary.py<br/>records every prompt sent to a model"] -.-> AUDIT[GET /boundary]
 ```
 
-**Note on the escalation branch:** `config/models.yaml` already defines an
-`escalate` role (`qwen3:8b`, deliberately a different model from the planner's
-`qwen3:4b`) and `app/llm.efficiency_report()` already counts
-`role == "escalate"` calls for `/efficiency`. As of this reading of the code,
-`plan_with_confidence()` in `app/planner.py` only *samples the planner role N
-times* to derive a high/medium/low confidence badge — it does not yet re-plan
-a low-confidence question against the `escalate` role. That wiring is being
-built in parallel by another agent right now, so the diagram above shows the
-intended design (self-consistency → confidence → escalate-on-low), not
-strictly what runs today. Everything else in Diagram 1 reflects the code as
-read.
+**Escalation:** When `plan_with_confidence()` in `app/planner.py` produces a
+low-confidence result (planner samples disagree below `FINANCE_ESCALATE_THRESHOLD`,
+default 0.6), or when the validator repair loop fails after one attempt, the system
+re-plans the question against the `escalate` role (`qwen3:8b`, deliberately larger
+than the planner's `qwen3:4b`). The escalated response is logged with `escalated=true`
+and counted by `app/llm.efficiency_report()` for `/efficiency`. This can be disabled
+with `FINANCE_ESCALATE=0`.
 
 `/ask_spec` skips the planner and validator/compiler-onward path directly from
 a hand-written `QuerySpec`, which is how the UI and eval harness work without
