@@ -327,6 +327,12 @@ RULES:
 - "spend"/"paid"/"payouts" = dataset "payouts" (debits).
 - "received"/"credits"/"income" = dataset "receipts" (credits).
 - "where did I spend the most" = group_by ["counterparty"] on payouts.
+- A "which X ...?" question MUST group_by that X, otherwise the answer is a
+  single number that cannot say which. "which channel" -> group_by ["channel"],
+  "which bank" -> group_by ["bank_name"], "which vendor" -> ["counterparty"].
+- METRIC comes from the wording, independently of grouping:
+  "spending", "spend", "how much", "total", "value" -> sum_amount
+  "how many", "how often", "number of", "count", "most frequently" -> count
 - NEVER copy a vendor name from the examples. Extract the EXACT name the user typed.
 - "EMI" before a name means category EMI_LOAN and counterparty = the name after EMI.
 
@@ -357,6 +363,15 @@ Q: Where did I spend the most this month?
 
 Q: Total tax paid in the last 3 months
 {{"dataset":"payouts","metric":"sum_amount","group_by":[],"filters":{{"category":"TAX"}}}}
+
+Q: Which payment channel do I use most often?
+{{"dataset":"payouts","metric":"count","group_by":["channel"],"filters":{{}}}}
+
+Q: Spending by payment channel last month
+{{"dataset":"payouts","metric":"sum_amount","group_by":["channel"],"filters":{{}}}}
+
+Q: Which bank do I spend the most through?
+{{"dataset":"payouts","metric":"sum_amount","group_by":["bank_name"],"filters":{{}}}}
 
 Q: How many UPI payments did I make?
 {{"dataset":"payouts","metric":"count","group_by":[],"filters":{{"channel":"UPI"}}}}

@@ -2,21 +2,22 @@
 
 | bucket | correct | total | % |
 |---|---:|---:|---:|
-| ALL | 48 | 49 | 98% |
+| ALL | 47 | 49 | 96% |
 | aggregate | 8 | 8 | 100% |
-| ambiguous | 3 | 3 | 100% |
+| ambiguous | 2 | 3 | 67% |
 | category | 8 | 8 | 100% |
 | channel | 1 | 1 | 100% |
-| dates | 15 | 15 | 100% |
-| filter | 8 | 9 | 89% |
+| dates | 14 | 15 | 93% |
+| filter | 9 | 9 | 100% |
 | grouped | 10 | 10 | 100% |
 | metric | 4 | 4 | 100% |
 | multiturn | 5 | 5 | 100% |
 | refusal | 8 | 8 | 100% |
-| vendor | 1 | 2 | 50% |
+| vendor | 2 | 2 | 100% |
 
-planner latency: p50 2064ms, max 34743ms
+planner latency: p50 1413ms, max 34646ms
 
 ### Failures
 
-- `flt_vendor_dmart` — spec mismatch: wanted {'dataset': 'payouts', 'metric': 'sum_amount', 'filters': {'counterparty': 'DMART AVENUE SUPERMARTS'}}
+- `dt_yesterday` — planner error: ModelUnavailable: Rate limited by https://generativelanguage.googleapis.com/v1beta/openai. Free tiers throttle quickly -- an eval run is ~150 calls. Wait, or lower confidence.samples in config/models.yaml.
+- `amb_unknown_category` — answered when it should have declined
