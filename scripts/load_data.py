@@ -1,8 +1,9 @@
 """Load the real schema into DuckDB, enrich it, and build rollups.
 
 Sources, in order of preference:
-  1. data/raw/*.csv                     (organisers' full export)
-  2. data/sample/seed.sql               (10 rows/table from the data dictionary)
+  1. a live MySQL database          (DB_HOST env var set -- the organisers' DB)
+  2. data/raw/*.csv                     (organisers' full export)
+  3. data/sample/seed.sql               (10 rows/table from the data dictionary)
 
 The enrichment step is the important one: it parses a counterparty and a
 channel out of each narration ONCE, so the assistant never does text parsing
@@ -26,7 +27,28 @@ SEMANTIC = yaml.safe_load((ROOT / "schema" / "semantic_layer.yaml").read_text())
 TABLES = ["bank", "account", "transaction"]
 
 
+def load_from_mysql(con) -> str:
+    """Attach the organisers' MySQL database via DuckDB's mysql scanner and
+    materialise the three source tables locally -- once, here -- so every
+    later step (enrichment, rollups, stats) runs against local DuckDB exactly
+    as it did against CSVs, at local-disk speed instead of round-tripping
+    10M+ rows over the network per query.
+    """
+    host, port = os.environ["DB_HOST"], os.environ.get("DB_PORT", "3306")
+    name, user, pw = os.environ["DB_NAME"], os.environ["DB_USER"], os.environ["DB_PASSWORD"]
+    con.execute("INSTALL mysql")
+    con.execute("LOAD mysql")
+    conn_str = f"host={host} port={port} user={user} password={pw} database={name}"
+    con.execute(f"ATTACH '{conn_str}' AS mysql_src (TYPE mysql)")
+    for t in TABLES:
+        con.execute(f'CREATE OR REPLACE TABLE "{t}" AS SELECT * FROM mysql_src."{t}"')
+    con.execute("DETACH mysql_src")
+    return f"mysql://{host}:{port}/{name}"
+
+
 def load_source(con) -> str:
+    if os.getenv("DB_HOST"):
+        return load_from_mysql(con)
     csvs = {t: RAW / f"{t}.csv" for t in TABLES}
     if all(p.exists() for p in csvs.values()):
         for t, p in csvs.items():
