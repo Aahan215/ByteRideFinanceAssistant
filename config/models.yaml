@@ -10,14 +10,14 @@ host:
   family: qwen2.5            # one family throughout -- prompt behaviour differs
                              # enough between families that re-tuning the planner
                              # few-shots mid-hackathon would cost hours
-
-# Comparison models, pulled for the model-efficiency table (BACKLOG Q4).
-# Not used at runtime.
-comparison:
-  - qwen3:0.6b
-  - qwen3:4b
-  - qwen3:8b
   note: "Single shared inference server. Do NOT run your own Ollama."
+
+# Candidates for the model-efficiency table (BACKLOG Q4). Not used at runtime;
+# `make eval-compare` runs the golden set across them.
+comparison:
+  - qwen2.5:3b
+  - llama3.2:3b
+  - qwen2.5:7b
 
 # Sampling params are baked into derived models on the host (see
 # scripts/build_models.sh), so they cannot drift even if a client forgets
