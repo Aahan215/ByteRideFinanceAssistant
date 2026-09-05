@@ -33,7 +33,10 @@ ChatFn = Callable[..., dict]
 DATASETS = list(SEMANTIC["datasets"])
 METRICS = list(SEMANTIC["metrics"])
 DIMENSIONS = list(SEMANTIC["dimensions"])
-CATEGORIES = SEMANTIC["spend_categories"]
+# UNCATEGORISED is where narrations we could not classify land. It must never
+# be offered to the model as something a user can ask for: "groceries" mapping
+# to UNCATEGORISED silently answers a question about a category we do not have.
+CATEGORIES = [c for c in SEMANTIC["spend_categories"] if c != "UNCATEGORISED"]
 
 DATASET_ALIASES = {
     "transaction": "transactions", "txn": "transactions", "txns": "transactions",

@@ -2,24 +2,17 @@
 
 | bucket | correct | total | % |
 |---|---:|---:|---:|
-| ALL | 45 | 49 | 92% |
+| ALL | 49 | 49 | 100% |
 | aggregate | 8 | 8 | 100% |
-| ambiguous | 2 | 3 | 67% |
+| ambiguous | 3 | 3 | 100% |
 | category | 8 | 8 | 100% |
 | channel | 1 | 1 | 100% |
 | dates | 15 | 15 | 100% |
-| filter | 8 | 9 | 89% |
-| grouped | 8 | 10 | 80% |
-| metric | 3 | 4 | 75% |
+| filter | 9 | 9 | 100% |
+| grouped | 10 | 10 | 100% |
+| metric | 4 | 4 | 100% |
 | multiturn | 5 | 5 | 100% |
 | refusal | 8 | 8 | 100% |
-| vendor | 1 | 2 | 50% |
+| vendor | 2 | 2 | 100% |
 
-planner latency: p50 2785ms, max 9745ms
-
-### Failures
-
-- `grp_by_channel` — spec mismatch: wanted {'dataset': 'payouts', 'metric': 'sum_amount', 'group_by': ['channel']}
-- `grp_count_by_category` — spec mismatch: wanted {'dataset': 'payouts', 'metric': 'count', 'group_by': ['category']}
-- `flt_vendor_dmart` — spec mismatch: wanted {'dataset': 'payouts', 'metric': 'sum_amount', 'filters': {'counterparty': 'DMART AVENUE SUPERMARTS'}}
-- `amb_unknown_category` — answered when it should have declined
+planner latency: p50 1995ms, max 34003ms

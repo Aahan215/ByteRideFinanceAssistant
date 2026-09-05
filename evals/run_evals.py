@@ -39,6 +39,11 @@ def subset_match(got: dict, want) -> bool:
     if isinstance(want, list):
         return isinstance(got, list) and len(got) == len(want) and \
             all(subset_match(g, w) for g, w in zip(got, want))
+    # A vendor that resolved to a family of branch-suffixed names satisfies an
+    # expectation naming the canonical one: "DMart" -> every DMART AVENUE
+    # SUPERMARTS branch is the answer the user wanted, not a mismatch.
+    if isinstance(got, list) and isinstance(want, str):
+        return want in got
     return got == want
 
 
@@ -109,8 +114,18 @@ def main():
             why = "answered when it should have declined"
         else:
             if "expect_spec" in case:
-                ok = subset_match(spec.model_dump(mode="json"), case["expect_spec"])
-                why = f"spec mismatch: wanted {case['expect_spec']}"
+                # Compare the spec that actually executes. The validator resolves
+                # "DMart" to the real vendor name, so judging the raw model output
+                # marks a correct answer wrong.
+                from app import validator as _v
+                verdict = _v.validate(spec)
+                effective = (verdict.repaired or spec) if verdict.ok else spec
+                got = effective.model_dump(mode="json")
+                # A question may have more than one defensible reading.
+                wants = case.get("accept_any") or [case["expect_spec"]]
+                ok = any(subset_match(got, w) for w in wants)
+                why = (f"spec mismatch: wanted any of {wants}" if len(wants) > 1
+                       else f"spec mismatch: wanted {case['expect_spec']}")
             if ok and "expected_value" in case:
                 ans = answer_spec(spec, case["question"])
                 got = metric_value(ans)

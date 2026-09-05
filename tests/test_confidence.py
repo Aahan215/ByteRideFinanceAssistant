@@ -42,3 +42,10 @@ def test_every_downgrade_carries_a_reason():
     a = assess(spec=spec(), row_count=2, planner_confidence="medium",
                comparison_mismatch=True)
     assert a.reasons and all(r.strip() for r in a.reasons)
+
+
+def test_uncategorised_is_rejected_as_a_user_filter():
+    from app.validator import validate
+    from app.spec import QuerySpec, Filters
+    v = validate(QuerySpec(dataset="payouts", filters=Filters(category="UNCATEGORISED")))
+    assert not v.ok and v.refusal

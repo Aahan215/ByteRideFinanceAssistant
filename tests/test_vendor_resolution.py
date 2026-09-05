@@ -48,3 +48,15 @@ def test_the_planner_normalises_the_filter_the_same_way_the_data_was():
     from app.planner import coerce
     d = coerce({"dataset": "payouts", "filters": {"counterparty": "Zomato Hyperpure"}})
     assert d["filters"]["counterparty"] == "ZOMATO HYPERPURE"
+
+
+def test_a_resolved_family_satisfies_a_canonical_expectation():
+    """The eval must not mark "DMart -> all 8 DMART branches" as a mismatch
+    against an expectation naming the canonical vendor."""
+    import sys, pathlib
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "evals"))
+    from run_evals import subset_match
+    got = {"filters": {"counterparty": ["DMART AVENUE SUPERMARTS",
+                                        "DMART AVENUE SUPERMARTS SAKET DELHI"]}}
+    assert subset_match(got, {"filters": {"counterparty": "DMART AVENUE SUPERMARTS"}})
+    assert not subset_match(got, {"filters": {"counterparty": "SWIGGY INSTAMART"}})

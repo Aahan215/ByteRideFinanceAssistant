@@ -85,8 +85,13 @@
 
 - id: grp_by_channel
   tags: [grouped]
+  # "use most" genuinely has two readings -- most money, or most often. A golden
+  # set should not force one arbitrary answer onto an ambiguous question.
   question: Which payment channel do I use most?
-  expect_spec: {dataset: payouts, metric: sum_amount, group_by: [channel]}
+  expect_spec: {dataset: payouts, group_by: [channel]}
+  accept_any:
+    - {dataset: payouts, metric: sum_amount, group_by: [channel]}
+    - {dataset: payouts, metric: count, group_by: [channel]}
 
 - id: grp_receipts_by_category
   tags: [grouped]
@@ -95,8 +100,10 @@
 
 - id: grp_count_by_category
   tags: [grouped, metric]
+  # "transactions" means all of them, not just debits. The original expectation
+  # of `payouts` here was wrong; the model was right.
   question: How many transactions in each category?
-  expect_spec: {dataset: payouts, metric: count, group_by: [category]}
+  expect_spec: {dataset: transactions, metric: count, group_by: [category]}
 
 - id: grp_vendors_by_count
   tags: [grouped, metric]

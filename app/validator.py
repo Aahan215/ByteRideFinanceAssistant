@@ -108,7 +108,14 @@ def validate(spec: QuerySpec) -> Verdict:
         value = getattr(spec.filters, dim)
         if value is None:
             continue
-        allowed = SEMANTIC.get("spend_categories") if dim == "category" else ["credit", "debit"]
+        if dim == "category":
+            # UNCATEGORISED is our own bucket for narrations we could not
+            # classify. Accepting it as a filter turns "how much on groceries?"
+            # into a confident total for something we never tracked.
+            allowed = [c for c in SEMANTIC.get("spend_categories", [])
+                       if c != "UNCATEGORISED"]
+        else:
+            allowed = ["credit", "debit"]
         if str(value).upper() not in [str(a).upper() for a in allowed]:
             near = get_close_matches(str(value).upper(), [str(a) for a in allowed], n=3, cutoff=0.6)
             return Verdict(False, refusal=f"'{value}' is not a {dim} I track."

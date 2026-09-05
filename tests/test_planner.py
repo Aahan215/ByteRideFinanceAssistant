@@ -136,3 +136,12 @@ def test_genuine_followups_are_still_detected():
               "Just show me tax", "Break that down by category instead",
               "How does that compare?", "same for last quarter"]:
         assert looks_like_followup(q, prior), q
+
+
+def test_uncategorised_is_not_offered_as_a_filterable_category():
+    """UNCATEGORISED is our bucket for narrations we could not classify.
+    Offering it let "how much on groceries?" become a confident total for a
+    category we never tracked."""
+    from app.planner import CATEGORIES
+    assert "UNCATEGORISED" not in CATEGORIES
+    assert "TAX" in CATEGORIES
