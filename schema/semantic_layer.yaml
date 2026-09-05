@@ -98,7 +98,7 @@ spend_categories: [TAX, BANK_CHARGES, INTEREST, EMI_LOAN, SALARY, UTILITIES,
                    # derived from the MERCHANT rather than the narration keywords
                    FOOD, GROCERIES, FUEL, HEALTHCARE, JEWELLERY, APPAREL,
                    ELECTRONICS, HOME,
-                   TRANSFER, UNCATEGORISED]
+                   TRANSFER, SELF_TRANSFER, REMITTANCE, UNCATEGORISED]
 
 synonyms:
   spend:       {dataset: payouts, metric: sum_amount}
@@ -114,6 +114,10 @@ synonyms:
   tds:         {dimension: category, value: TAX}
   fees:        {dimension: category, value: BANK_CHARGES}
   charges:     {dimension: category, value: BANK_CHARGES}
+  remittance:  {dimension: category, value: REMITTANCE}
+  remittances: {dimension: category, value: REMITTANCE}
+  "self transfer": {dimension: category, value: SELF_TRANSFER}
+  selftransfer: {dimension: category, value: SELF_TRANSFER}
   vendor:      {dimension: counterparty}
   merchant:    {dimension: counterparty}
   supplier:    {dimension: counterparty}

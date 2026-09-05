@@ -18,13 +18,18 @@ from dataclasses import dataclass
 # --- channel detection -------------------------------------------------------
 CHANNELS: list[tuple[str, re.Pattern]] = [
     ("UPI",   re.compile(r"^\s*UPI[-/]", re.I)),
-    ("IMPS",  re.compile(r"^\s*IMPS[\s/]", re.I)),
-    ("NEFT",  re.compile(r"^\s*NEFT[\s/-]", re.I)),
+    ("IMPS",  re.compile(r"^\s*IMPS[\s/-]", re.I)),
+    ("NEFT",  re.compile(r"^\s*(NEFT[\s/-]|N/\d)", re.I)),
     ("RTGS",  re.compile(r"^\s*RTGS[\s/-]", re.I)),
     ("FT",    re.compile(r"^\s*FT\s*-", re.I)),
     ("ACH",   re.compile(r"^\s*(ACH|NACH)[\s/-]", re.I)),
     ("CHEQUE", re.compile(r"CHEQUE|\bCHQ\b", re.I)),
 ]
+# NOTE: bank narrations abbreviate NEFT to a bare "N/<ref>/<bankcode>/<name>",
+# and some IMPS narrations use a hyphen instead of a slash ("IMPS-<ref>-<bank>/
+# <name>"). Both used to fall through channel detection entirely -- 340k+ rows
+# (the majority of UNCATEGORISED) were ordinary person-to-person transfers that
+# had a real payment rail, just not one this regex recognised yet.
 # NOTE: `channel` is the payment RAIL only. "CHARGES" and "GST" used to live
 # here, which tagged every GST payment with channel=CHARGES -- a category
 # masquerading as a rail. Fee-vs-transfer is what `category` is for.
@@ -72,9 +77,17 @@ CATEGORIES: list[tuple[str, re.Pattern]] = [
     ("INSURANCE",   re.compile(r"\b(INSURANCE|PREMIUM|POLICY|\bLIC\b)\b", re.I)),
     ("INVESTMENT",  re.compile(r"\b(MUTUAL\s*FUND|\bSIP\b|ZERODHA|GROWW|UPSTOX|DEMAT|"
                               r"\bNSE\b|\bBSE\b)\b", re.I)),
-    ("CASH",        re.compile(r"\b(ATM|CASH\s*(WDL|WITHDRAWAL|DEP)|\bCW\b)\b", re.I)),
+    ("CASH",        re.compile(r"\b(ATM|CASH\s*(WDL|WITHDRAWAL|DEPOSIT|DEP)|\bCW\b)\b", re.I)),
     ("CHEQUE",      re.compile(r"\b(CHEQUE|CHQ)\b", re.I)),
     ("RENT",        re.compile(r"\bRENT\b", re.I)),
+    # Money moved between the account holder's own accounts -- not a vendor
+    # payout, not income. 148k rows ("A2AINT/.../SELFTRANSFER") were falling
+    # into UNCATEGORISED because CASH/DEP was the only self-referential rule.
+    ("SELF_TRANSFER", re.compile(r"\bSELF\s*TRANSFER\b", re.I)),
+    # Cross-border inward wires ("SWIFT/<ref>/<bank>/INCOMING REMITTANCE").
+    # These have no vendor field at all, just a settlement bank code, so they
+    # need their own bucket rather than being lumped into generic TRANSFER.
+    ("REMITTANCE",  re.compile(r"\bREMITTANCE\b", re.I)),
 ]
 
 # Category from the MERCHANT, not the narration keywords.
@@ -125,7 +138,8 @@ TRANSFER_CHANNELS = {"UPI", "IMPS", "NEFT", "RTGS", "FT"}
 # Categories where the narration describes an EVENT, not a payee. Without this,
 # the fallback rule happily extracts "MIN BAL PENALTY" and "ATM CASH WDL" as
 # vendors, and "where did I spend the most" ranks them alongside real shops.
-NO_COUNTERPARTY = {"BANK_CHARGES", "TAX", "CASH", "CHEQUE", "INTEREST"}
+NO_COUNTERPARTY = {"BANK_CHARGES", "TAX", "CASH", "CHEQUE", "INTEREST",
+                   "SELF_TRANSFER", "REMITTANCE"}
 
 # "NA" is our own placeholder for a missing reference id leaking into the name.
 TRAILING_PLACEHOLDER = re.compile(r"\s+(NA|NULL|NONE)\s*$", re.I)
