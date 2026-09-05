@@ -251,9 +251,19 @@ def _compare(spec: QuerySpec, df, warnings: list[str], scope=None) -> Comparison
 @app.get("/health")
 def health():
     """The anchor date matters to the UI: it is the assistant's "today", so a
-    banner can tell the user what "this month" actually resolves to."""
-    from app.db import anchor_status
-    return {"ok": True, "anchor_date": str(anchor_date()), **anchor_status()}
+    banner can tell the user what "this month" actually resolves to.
+
+    Readiness is checked here, before anchor_date(), rather than left to
+    surface as a 500 -- anchor_date() queries txn_enriched, which does not
+    exist until load_data.py has run, and a 500 tells the UI nothing it can
+    show the user.
+    """
+    from app.db import anchor_status, etl_status
+    etl = etl_status()
+    if not etl["ready"]:
+        return {"ok": False, "etl_ready": False, "problems": etl["problems"],
+                "warning": etl["hint"]}
+    return {"ok": True, "etl_ready": True, "anchor_date": str(anchor_date()), **anchor_status()}
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent

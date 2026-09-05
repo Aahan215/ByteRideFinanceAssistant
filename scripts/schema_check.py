@@ -11,6 +11,7 @@ import duckdb
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from app.data_dictionary import declared        # noqa: E402
+from app.db import etl_problems, REQUIRED_DERIVED  # noqa: E402
 
 DB = ROOT / "data" / "finance.duckdb"
 
@@ -61,13 +62,29 @@ def main():
         for extra in sorted(set(have) - set(cols)):
             print(f"  {'extra':8} {extra:26} {have[extra]}  (not in the dictionary)")
 
+    # The dictionary only describes the 3 source tables -- it says nothing
+    # about the derived objects the whole query path actually reads. Without
+    # this, a database missing load_data.py's output still passes.
+    print("\nderived objects (built by load_data.py)")
+    derived_problems = etl_problems(con)
+    for name in REQUIRED_DERIVED:
+        exists = con.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_name = ?", [name]
+        ).fetchone()
+        if exists:
+            n = con.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
+            print(f"  {'ok':8} {name:26} {n:,} rows")
+        else:
+            print(f"  {'MISSING':8} {name:26}")
+    problems.extend(derived_problems)
+
     print("\n" + "-" * 62)
     if problems:
         print(f"{len(problems)} problem(s):")
         for p in problems:
             print("  -", p)
         sys.exit(1)
-    print("Schema matches the data dictionary.")
+    print("Schema matches the data dictionary, and all derived objects are present.")
 
 
 if __name__ == "__main__":

@@ -226,6 +226,22 @@ OUT_OF_SCOPE = (
      "I have no accounting statements -- only bank transactions."),
     (re.compile(r"\binvoices?\b", re.I),
      "I have bank transactions, not invoices."),
+    # Commercial terms. A transaction records WHAT LEFT THE ACCOUNT -- there is
+    # no price, no list price and no discount anywhere in the schema, so a
+    # question about them can only be answered by inventing one.
+    (re.compile(r"\b(discount\w*|cashback|coupons?|promo\w*|vouchers?|"
+                r"rewards?\s*points?|loyalty|best deal|deals?\b|offers?\b)", re.I),
+     "I have no pricing or discount information. A transaction records the "
+     "amount that left the account, not a list price or what was saved against "
+     "one, so I cannot say which vendor discounts most. I can show what you "
+     "actually paid each vendor."),
+    (re.compile(r"\b(margins?|mark[- ]?up|\broi\b|return on investment|"
+                r"\byield\b|profitab\w*)\b", re.I),
+     "I have no cost or revenue data -- only bank transactions -- so I cannot "
+     "compute margins or returns."),
+    (re.compile(r"\b(mrp|list price|unit price|price per|retail price)\b", re.I),
+     "I have no product or pricing data; a transaction records only the amount "
+     "paid."),
     (re.compile(r"\btax\b.{0,15}\bowe|\bowe\b.{0,15}\btax\b|"
                 r"\btax (owed|due|liability|return|refund)\b", re.I),
      "I can show tax payments that were made, but I have nothing about tax owed."),

@@ -274,6 +274,23 @@
   question: How much tax do I still owe this year?
   expect_refusal: true
 
+- id: ref_discount
+  tags: [refusal]
+  # Answered with a top-vendors-by-spend ranking: a different question, answered
+  # confidently. Nothing in the schema records a price or a discount.
+  question: Which vendor gives me the best discount?
+  expect_refusal: true
+
+- id: ref_cashback
+  tags: [refusal]
+  question: How much cashback did I earn last month?
+  expect_refusal: true
+
+- id: ref_margin
+  tags: [refusal]
+  question: What is my margin on these purchases?
+  expect_refusal: true
+
 - id: ref_invoices
   tags: [refusal]
   question: Show me all invoices from Acme Corp

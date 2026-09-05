@@ -397,3 +397,22 @@ def test_the_savings_view_excludes_commitments_in_sql():
     sql, params, _ = compile_sql(spec, datetime.date(2026, 6, 30))
     assert "category NOT IN (?, ?)" in sql
     assert "TAX" in params and "EMI_LOAN" in params
+
+
+def test_commercial_concepts_absent_from_the_schema_are_refused():
+    """"Which vendor gives me the best discount?" answered with a top-vendors-
+    by-spend ranking -- a different question, answered confidently. There is no
+    price, list price or discount anywhere in the schema."""
+    from app.planner import out_of_scope
+    for q in ["Which vendor gives me the best discount",
+              "how much cashback did I get?", "which vendor has the best offers?",
+              "what is my margin on this?", "what was the MRP?",
+              "show me the best deal", "how many reward points do I have?"]:
+        assert out_of_scope(q), q
+
+
+def test_price_questions_we_CAN_answer_are_not_blocked():
+    from app.planner import out_of_scope
+    for q in ["what was my largest payment?", "how much did I pay Zomato?",
+              "what did I spend the most on?", "cheapest month for groceries"]:
+        assert out_of_scope(q) is None, q
