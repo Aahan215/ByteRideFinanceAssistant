@@ -31,6 +31,20 @@ LABELS = {"counterparty": "vendors", "category": "categories", "channel": "chann
 def _measure(spec, value) -> str:
     return f"{int(value):,}" if spec.metric == "count" else inr(value)
 
+
+def _group_value(dim: str, value) -> str:
+    """A month is "April 2026", not "2026-04-01 00:00:00"."""
+    if dim in ("month", "quarter") and value is not None:
+        try:
+            import pandas as pd
+            ts = pd.Timestamp(value)
+            if dim == "month":
+                return ts.strftime("%B %Y")
+            return f"Q{(ts.month - 1) // 3 + 1} {ts.year}"
+        except Exception:
+            pass
+    return str(value)
+
 SYSTEM = """You are a finance assistant narrator. You explain query results in plain English.
 
 STRICT RULES:
@@ -121,10 +135,12 @@ def template(df, spec, window_desc: str) -> str:
     top = df.iloc[0]
     dim = spec.group_by[0]
     result = (f"Across {len(df)} {LABELS.get(dim, dim + 's')} for {window_desc}, "
-              f"{top[dim]} is highest at {_measure(spec, top[spec.metric])}.")
+              f"{_group_value(dim, top[dim])} is highest at "
+              f"{_measure(spec, top[spec.metric])}.")
     if len(df) > 1:
         second = df.iloc[1]
-        result += f" Followed by {second[dim]} at {_measure(spec, second[spec.metric])}."
+        result += (f" Followed by {_group_value(dim, second[dim])} at "
+                   f"{_measure(spec, second[spec.metric])}.")
     return result
 
 
@@ -144,6 +160,7 @@ def with_comparison(text: str, comp, spec) -> str:
     if not movers:
         return f"{text} No overlapping figures for {comp.window}."
     top, key = movers[0], spec.group_by[0]
+    top = {**top, key: _group_value(key, top[key])}
     if top["value"] == 0 and top["previous"]:
         return (f"{text} Compared with {comp.window}, the biggest move is "
                 f"{top[key]}: {inr(abs(top['delta']))} last period, nothing this one.")

@@ -325,3 +325,34 @@ def test_out_of_scope_is_checked_on_follow_ups_too():
     r = plan_detailed("Which transactions are unreconciled?", prior,
                       chat_fn=lambda *a, **k: {"dataset": "transactions", "metric": "count"})
     assert r.spec.unsupported_reason and "reconciliation" in r.spec.unsupported_reason
+
+
+def test_grouping_by_a_pinned_filter_is_dropped():
+    """"Trends of Priya Sharma" came back grouped BY counterparty while
+    counterparty was filtered to PRIYA SHARMA -- one row, rendered as a
+    one-slice pie chart that answers nothing."""
+    r = plan_detailed("Give me the trends of Priya Sharma for this quarter",
+                      chat_fn=lambda *a, **k: {
+                          "dataset": "payouts", "metric": "sum_amount",
+                          "group_by": ["counterparty"],
+                          "filters": {"counterparty": "Priya Sharma"}})
+    assert "counterparty" not in r.spec.group_by
+    assert r.spec.group_by == ["month"]          # a trend is about time
+    assert r.spec.filters.counterparty == "PRIYA SHARMA"
+
+
+def test_trend_wording_is_detected_deterministically():
+    from app.planner import wants_trend
+    for q in ["show me the trend", "spending over time", "month by month",
+              "monthly spending", "how has my spending changed"]:
+        assert wants_trend(q), q
+    for q in ["where did I spend the most", "total tax last quarter"]:
+        assert not wants_trend(q), q
+
+
+def test_a_normal_grouping_is_untouched():
+    r = plan_detailed("Where did I spend the most this month?",
+                      chat_fn=lambda *a, **k: {
+                          "dataset": "payouts", "metric": "sum_amount",
+                          "group_by": ["counterparty"], "filters": {}})
+    assert r.spec.group_by == ["counterparty"]

@@ -301,6 +301,17 @@ DATASET_CUES = (
 )
 
 
+# "Trend" is a question about time, and it is regular enough in English to
+# decide without the model -- the same lever as dates and dataset direction.
+TREND_RE = re.compile(
+    r"\b(trends?|over time|month[- ]by[- ]month|monthly|by month|per month|"
+    r"quarterly|by quarter|movement|trajectory|how .{0,20}chang\w+)\b", re.I)
+
+
+def wants_trend(question: str) -> bool:
+    return bool(TREND_RE.search(question))
+
+
 def dataset_from_words(question: str) -> str | None:
     """Only fires on an explicit cue, so a follow-up that says nothing about
     direction leaves the prior dataset alone."""
@@ -761,6 +772,22 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
                 "I do not derive that category from your transactions. I can "
                 f"break spending down by: {', '.join(CATEGORIES)}.")),
             confidence="high", attempts=attempts)
+
+    # Grouping by a dimension you have filtered to ONE value is degenerate: it
+    # can only ever return a single row, and renders as a one-slice pie chart.
+    # "Trends of Priya Sharma" asked for counterparty spending grouped BY
+    # counterparty, which answers nothing.
+    pinned = {d for d in spec.group_by
+              if getattr(spec.filters, d, None) not in (None, [], "")}
+    if pinned:
+        spec = spec.model_copy(update={
+            "group_by": [d for d in spec.group_by if d not in pinned]})
+
+    # A trend question is about time. If nothing meaningful is left to group by,
+    # group by month -- that is what "trend" means.
+    if wants_trend(question) and not spec.group_by:
+        unit = "quarter" if re.search(r"\bquarterly|by quarter\b", question, re.I) else "month"
+        spec = spec.model_copy(update={"group_by": [unit]})
 
     if dr is not None:
         spec = spec.model_copy(update={"date_range": dr})

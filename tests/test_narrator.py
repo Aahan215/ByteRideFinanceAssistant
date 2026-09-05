@@ -16,3 +16,12 @@ def test_plural_labels_are_real_words():
     from app.narrator import LABELS
     assert LABELS["counterparty"] == "vendors"
     assert LABELS["category"] == "categories"
+
+
+def test_month_groups_read_as_months_not_timestamps():
+    """"2026-04-01 00:00:00 is highest" is not how anyone reads a trend."""
+    from app.narrator import _group_value
+    assert _group_value("month", "2026-04-01 00:00:00") == "April 2026"
+    assert _group_value("quarter", "2026-04-01") == "Q2 2026"
+    assert _group_value("counterparty", "ZOMATO HYPERPURE") == "ZOMATO HYPERPURE"
+    assert _group_value("month", None) == "None"
