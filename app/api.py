@@ -93,6 +93,11 @@ class Answer(BaseModel):
     clarification: str | None = None
     suggestions: list[str] = []
     spec: dict | None = None       # what we actually ran -- powers export + "show your working"
+    # Model efficiency (BACKLOG M6): which model actually produced this
+    # answer's spec, and whether that took a trip to the escalate tier. None
+    # only when /ask_spec bypassed the planner entirely.
+    model_used: str | None = None
+    escalated: bool = False
 
 
 def answer_spec(spec: QuerySpec, question: str = "", scope=None) -> Answer:
@@ -316,6 +321,7 @@ def ask(req: Ask):
         if not out.refused:
             SESSIONS[key] = spec
         out.confidence = "n/a"
+        out.model_used = "stub"
         out.warnings.insert(0, "STUB PLANNER — keyword rules, not the language "
                                "model. Unset FINANCE_STUB_PLANNER before demoing.")
         return out
@@ -327,6 +333,8 @@ def ask(req: Ask):
         return Answer(answer=str(e), refused=True, confidence="n/a")
 
     out = answer_spec(result.spec, req.question, scope=scope)
+    out.model_used = result.model_used
+    out.escalated = result.escalated
 
     # Only a turn we could actually answer becomes context for the next one.
     # Storing a refusal means the follow-up ("how does that compare?") refines

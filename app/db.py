@@ -4,13 +4,29 @@ import functools, os, pathlib, datetime
 import duckdb, yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-DB_PATH = ROOT / "data" / "finance.duckdb"
+# Optional override so tooling/tests can point at a scratch database without
+# touching the real one at data/finance.duckdb. Unset in production -- the
+# deployed instance just uses the default path built during the Render build.
+DB_PATH = pathlib.Path(os.environ["FINANCE_DB_PATH"]) if os.getenv("FINANCE_DB_PATH") \
+    else ROOT / "data" / "finance.duckdb"
 SEMANTIC = yaml.safe_load((ROOT / "schema" / "semantic_layer.yaml").read_text())
 
 
 @functools.lru_cache(maxsize=1)
-def connect(read_only: bool = True) -> duckdb.DuckDBPyConnection:
+def _root(read_only: bool = True) -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(DB_PATH), read_only=read_only)
+
+
+def connect(read_only: bool = True) -> duckdb.DuckDBPyConnection:
+    # A fresh cursor per call, not the shared root connection -- threads in
+    # FastAPI's threadpool sharing one DuckDB connection get None back (a
+    # racing execute() beat them to the result) or, worse, another thread's
+    # result silently swapped in. That's a 500 at best, a wrong number at
+    # worst. `.cursor()` is an independent connection over the same database.
+    return _root(read_only).cursor()
+
+
+connect.cache_clear = _root.cache_clear
 
 
 ANCHOR_MODE = os.getenv("FINANCE_ANCHOR_MODE") or SEMANTIC["anchor"].get("mode", "data")

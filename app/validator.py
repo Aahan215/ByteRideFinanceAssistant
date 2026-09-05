@@ -79,11 +79,19 @@ def resolve_counterparty(value: str, known: list[str]
         toks = v.split()
         ext = [orig for norm, orig in index.items()
                if norm != v and norm.split()[:len(toks)] == toks]
-        if len(ext) > 1 and len({index_norm.split()[len(toks)]
-                                 for index_norm in
-                                 (n for n in index if n != v
-                                  and n.split()[:len(toks)] == toks)}) > 1:
-            return None, sorted([index[v]] + ext)[:5], "ambiguous"
+        next_words = {n.split()[len(toks)] for n in index
+                      if n != v and n.split()[:len(toks)] == toks}
+        if len(ext) > 1 and len(next_words) > 1:
+            # Divergent extensions. Whether that means DIFFERENT ENTITIES or
+            # BRANCHES OF ONE depends on the base:
+            #   "RAJESH"                  + AGARWAL / BHATT   -> different people, ask
+            #   "DMART AVENUE SUPERMARTS" + ANDHERI / DAHISAR -> branches, sum them
+            # A lone first name plus a surname is a new person; a full multi-word
+            # business name plus a suffix is a location. Asking "which DMart?" is
+            # pedantry, and it was refusing the exact canonical name.
+            if len(toks) == 1:
+                return None, sorted([index[v]] + ext)[:5], "ambiguous"
+            return sorted([index[v]] + ext), [], "family"
         return index[v], [], "exact"
 
     # 2. every word the user gave appears in the vendor name. This is the case
@@ -115,6 +123,59 @@ def resolve_counterparty(value: str, known: list[str]
         return index[near[0]], [], "fuzzy"
     if near:
         return None, [index[n] for n in near], "ambiguous"
+    return None, [], "unknown"
+
+
+def _banks() -> list[tuple[str, str]]:
+    """(code, name) pairs. Ten rows; the cost is nil."""
+    try:
+        return [(str(c), str(n)) for c, n in run("SELECT bank_code, bank_name FROM bank").values]
+    except Exception:
+        return []
+
+
+def resolve_bank(value: str) -> tuple[str | None, list[str], str]:
+    """Resolve what the user typed to a bank that exists. Returns (name, candidates, how).
+
+    People say "SBI", "SBIN", "State Bank", "state bank of india", "Kotak" -- an
+    abbreviation, the IFSC code, a prefix of the name, or the name in any case.
+    The old path compared the raw string against upper-cased names with a
+    case-sensitive fuzzy match, so ALL of those were refused while 273,528 SBI
+    transactions sat in the table.
+    """
+    banks = _banks()
+    v = " ".join(str(value).upper().split())
+    if not v or not banks:
+        return None, [], "unknown"
+    v_alnum = "".join(ch for ch in v if ch.isalnum())
+
+    # 1. exact on name or code, case-insensitive
+    for code, name in banks:
+        if v == name.upper() or v == code.upper():
+            return name, [], "exact"
+    # 2. abbreviation <-> code prefix either way: SBI ~ SBIN, ICICI ~ ICIC
+    hits = [name for code, name in banks
+            if code.upper().startswith(v_alnum) or v_alnum.startswith(code.upper())]
+    if len(hits) == 1:
+        return hits[0], [], "code-prefix"
+    # 3. every word the user gave appears in the bank name: "state bank", "kotak"
+    words = set(v.replace("BANK", " ").split()) - {"THE", "OF", "LTD", "LIMITED", ""}
+    if words:
+        hits = [name for _, name in banks if words <= set(name.upper().split())]
+        if len(hits) == 1:
+            return hits[0], [], "all-words"
+        if len(hits) > 1:
+            return None, sorted(hits), "ambiguous"
+    # 4. the name starts with what they typed
+    hits = [name for _, name in banks if name.upper().startswith(v)]
+    if len(hits) == 1:
+        return hits[0], [], "name-prefix"
+    # 5. fuzzy, on upper-cased names so case is never the reason for a miss
+    near = get_close_matches(v, [n.upper() for _, n in banks], n=3, cutoff=0.7)
+    if len(near) == 1:
+        return next(n for _, n in banks if n.upper() == near[0]), [], "fuzzy"
+    if near:
+        return None, [next(n for _, n in banks if n.upper() == m) for m in near], "ambiguous"
     return None, [], "unknown"
 
 
@@ -174,7 +235,23 @@ def validate(spec: QuerySpec) -> Verdict:
             f"'{ref}' does not look like a transaction reference. Reference "
             f"numbers are codes such as S69244711 or HDFCH01078329532."))
 
-    for dim in ("channel", "bank_name"):
+    # Bank: the model may put "SBI" in bank_name or "SBIN" in bank_code.
+    # Resolve whichever it set, over both name and code, into a canonical name.
+    bank_in = spec.filters.bank_name or spec.filters.bank_code
+    if bank_in is not None:
+        name, candidates, how = resolve_bank(str(bank_in))
+        if name is None:
+            if candidates:
+                return Verdict(False, clarification=(
+                    f"I have several banks matching '{bank_in}'. Which did you mean?"),
+                    candidates=candidates)
+            return Verdict(False, refusal=f"I have no bank matching '{bank_in}' in this dataset.")
+        repaired.filters.bank_name = name
+        repaired.filters.bank_code = None
+        if how != "exact":
+            warnings.append(f"Interpreted bank '{bank_in}' as '{name}'.")
+
+    for dim in ("channel",):
         value = getattr(spec.filters, dim)
         if value is None:
             continue

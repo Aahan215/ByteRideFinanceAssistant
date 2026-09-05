@@ -10,13 +10,18 @@ Expected VALUES are never hand-written. They are derived by running the
 hand-verified `expect_spec` through the same engine, so a human only ever
 checks an interpretation, never arithmetic.
 
-    python evals/run_evals.py                      # current configured model
-    python evals/run_evals.py --model qwen2.5:3b   # candidate comparison
+    python evals/run_evals.py                      # tiered config, escalation on
+    python evals/run_evals.py --model qwen2.5:3b   # single-model comparison,
+                                                    #   escalation forced off so
+                                                    #   the table shows the raw
+                                                    #   model, not the pipeline
+    python evals/run_evals.py --model qwen3:4b --escalate-model qwen3:8b
+                                                    # explicit tiered comparison
     python evals/run_evals.py --stub               # no model at all
     python evals/run_evals.py --out report.md      # markdown for the deck
 """
 from __future__ import annotations
-import argparse, collections, pathlib, sys, time
+import argparse, collections, os, pathlib, sys, time
 
 import yaml
 
@@ -60,13 +65,24 @@ def run_case(case, planner, priors: dict):
     result = planner(case["question"], prior)
     latency = time.perf_counter() - t0
     spec = result if isinstance(result, QuerySpec) else result.spec
+    # The stub and a bare QuerySpec carry no model attribution; plan_detailed
+    # always returns a PlanResult, which does.
+    model_used = getattr(result, "model_used", None) or "stub"
+    escalated = bool(getattr(result, "escalated", False))
     priors[case["id"]] = spec
-    return spec, latency
+    return spec, latency, model_used, escalated
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", help="override the planner model (e.g. qwen2.5:3b)")
+    ap.add_argument("--model", help="override the planner model for a single-model "
+                                    "comparison (e.g. qwen2.5:3b); this also turns "
+                                    "escalation OFF so the table reflects that model "
+                                    "alone, not the tiered pipeline -- pass "
+                                    "--escalate-model too to compare tiered configs")
+    ap.add_argument("--escalate-model", help="override the escalate model; combine "
+                                             "with --model to run an explicit tiered "
+                                             "comparison instead of a single-model one")
     ap.add_argument("--stub", action="store_true", help="keyword planner, no model")
     ap.add_argument("--freeze", action="store_true",
                     help="recompute expected values from the verified specs")
@@ -80,23 +96,38 @@ def main():
     if a.stub:
         from app.stub_planner import plan as planner
         label = "stub (keyword rules)"
+        escalation_note = "n/a"
     else:
         from app.planner import plan_detailed
+        from app.llm import set_model, MODELS
         if a.model:
-            from app.llm import set_model
             set_model("planner", a.model)
-        from app.llm import MODELS
+            if not a.escalate_model:
+                # A single-model comparison should show what THAT model does,
+                # not the tiered pipeline quietly bailing it out -- see M6.
+                os.environ["FINANCE_ESCALATE"] = "0"
+        if a.escalate_model:
+            set_model("escalate", a.escalate_model)
+            # An explicit tiered comparison always wants escalation on, even if
+            # the shell has FINANCE_ESCALATE=0 set from a prior single-model run.
+            os.environ["FINANCE_ESCALATE"] = "1"
         planner, label = plan_detailed, MODELS["planner"]
+        escalation_note = ("disabled (--model without --escalate-model)"
+                           if os.getenv("FINANCE_ESCALATE") == "0"
+                           else f"on -> {MODELS['escalate']}")
 
-    print(f"planner: {label}   cases: {len(cases)}\n")
+    print(f"planner: {label}   escalate: {escalation_note}   cases: {len(cases)}\n")
 
     stats = collections.defaultdict(lambda: [0, 0])   # bucket -> [hits, total]
     failures, latencies, priors = [], [], {}
+    # model attribution: model name -> [answered, correct]; escalated vs not -> [answered, correct]
+    model_usage = collections.defaultdict(lambda: [0, 0])
+    by_escalation = {True: [0, 0], False: [0, 0]}
 
     for case in cases:
         cid, tags = case["id"], case.get("tags", ["untagged"])
         try:
-            spec, ms = run_case(case, planner, priors)
+            spec, ms, model_used, escalated = run_case(case, planner, priors)
             latencies.append(ms)
         except Exception as e:
             failures.append((cid, f"planner error: {type(e).__name__}: {e}"))
@@ -126,22 +157,52 @@ def main():
                 ok = any(subset_match(got, w) for w in wants)
                 why = (f"spec mismatch: wanted any of {wants}" if len(wants) > 1
                        else f"spec mismatch: wanted {case['expect_spec']}")
-            if ok and "expected_value" in case:
-                ans = answer_spec(spec, case["question"])
-                got = metric_value(ans)
-                exp = case["expected_value"]
+            # VALUE check, computed live. Build the reference spec from the
+            # verified expect_spec, inheriting everything the case does not pin
+            # from the planner's own spec (a follow-up's window comes from the
+            # prior turn; accept_any leaves the metric open). Then run BOTH
+            # through the same engine on the same data and compare. Nothing is
+            # frozen, so nothing goes stale.
+            if ok and "expect_spec" in case and not case.get("accept_any"):
+                ref = spec.model_copy(deep=True)
+                ref_dict = ref.model_dump()
+                for k, v in case["expect_spec"].items():
+                    if k == "filters":
+                        for fk, fv in v.items():
+                            # Keep the planner's RESOLVED value when it already
+                            # satisfies the expectation -- "DMart" resolved to a
+                            # family containing the canonical name, and re-pinning
+                            # the raw string threw that resolution away.
+                            if not subset_match(ref_dict["filters"].get(fk), fv):
+                                ref_dict["filters"][fk] = fv
+                    else:
+                        ref_dict[k] = v
+                try:
+                    ref = QuerySpec(**ref_dict)
+                    got = metric_value(answer_spec(spec, case["question"]))
+                    exp = metric_value(answer_spec(ref, case["question"]))
+                except Exception as e:  # noqa: BLE001
+                    got, exp = f"error {type(e).__name__}", None
                 isnan = lambda v: isinstance(v, float) and v != v   # noqa: E731
                 got = None if isnan(got) else got
                 exp = None if isnan(exp) else exp
-                ok = (got is None and exp is None) or (
-                    got is not None and exp is not None and abs(got - exp) < 0.01)
-                why = f"value {got} != {exp}"
+                same = (got is None and exp is None) or (
+                    isinstance(got, (int, float)) and isinstance(exp, (int, float))
+                    and abs(got - exp) < 0.01)
+                if not same:
+                    ok = False
+                    why = f"value {got} != {exp} (live reference)"
 
         for t in tags + ["ALL"]:
             stats[t][0] += ok
             stats[t][1] += 1
         if not ok:
             failures.append((cid, why))
+
+        model_usage[model_used][1] += 1
+        model_usage[model_used][0] += ok
+        by_escalation[escalated][1] += 1
+        by_escalation[escalated][0] += ok
 
     if a.freeze:
         freeze(cases)
@@ -159,6 +220,22 @@ def main():
         lines += ["", "### Failures", ""]
         lines += [f"- `{cid}` — {why}" for cid, why in failures]
 
+    total_cases = sum(t for _, t in model_usage.values())
+    if total_cases:
+        lines += ["", "### Model usage", "",
+                 "| model | cases | share | accuracy |", "|---|---:|---:|---:|"]
+        for model, (hit, tot) in sorted(model_usage.items(), key=lambda kv: -kv[1][1]):
+            lines.append(f"| {model} | {tot} | {100*tot/total_cases:.0f}% | "
+                         f"{100*hit/tot:.0f}% |")
+        esc_hit, esc_tot = by_escalation[True]
+        plain_hit, plain_tot = by_escalation[False]
+        lines += ["", f"escalation rate: {esc_tot}/{total_cases} "
+                     f"({100*esc_tot/total_cases:.0f}%)"]
+        if esc_tot and plain_tot:
+            lines.append(f"accuracy — escalated: {100*esc_hit/esc_tot:.0f}% "
+                         f"({esc_tot} cases), not escalated: "
+                         f"{100*plain_hit/plain_tot:.0f}% ({plain_tot} cases)")
+
     report = "\n".join(lines)
     print(report)
     if a.out:
@@ -175,6 +252,14 @@ def main():
 
 
 def freeze(cases):
+    """DEPRECATED and disabled. Frozen values go stale whenever the dataset is
+    regenerated, and multi-turn cases were frozen without their prior turn.
+    Values are now computed live at eval time from expect_spec."""
+    sys.exit("`--freeze` is disabled: expected values are computed live from "
+             "expect_spec at eval time. There is nothing to freeze.")
+
+
+def _freeze_legacy(cases):
     """Derive expected values by running each hand-verified spec. Nobody hand
     computes a sum; the human only checks that the interpretation is right."""
     out, skipped = [], 0

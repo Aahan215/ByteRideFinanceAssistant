@@ -4,28 +4,74 @@ Natural-language questions over a financial ledger. Every answer is computed by
 SQL against real records; the model translates intent and narrates results, and
 never produces a number itself.
 
-## Setup
+## Prerequisites
+
+- **Python 3.12+**
+- **Node 18+** (only needed to build the React UI — a no-build fallback UI
+  ships in `ui/index.html` and works without Node)
+- **[Ollama](https://ollama.com)** installed locally, with the models this
+  project uses pulled ahead of time:
+
+  ```bash
+  ollama pull qwen3:4b     # planner / narrator / router
+  ollama pull qwen3:8b     # escalation tier
+  ollama pull qwen3:1.7b   # only needed for `make eval-compare`
+  ```
+
+  See `config/models.yaml` for exactly which role uses which model, and
+  `WORKFLOW.md` for why only one shared Ollama server should run during the
+  hackathon.
+
+## Quick start from a clean clone
+
+The shortest path from a fresh checkout to a running UI:
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python scripts/load_data.py  # falls back to data/sample/seed.sql until the
-                             # organisers' CSVs land in data/raw/
-python scripts/schema_check.py   # verify the load matches the data dictionary
-cd frontend && npm install && npm run build && cd ..
-uvicorn app.api:app --reload      # UI at http://localhost:8000
+make setup                    # venv + deps + copies .env.example -> .env
+# put the organisers' CSVs in data/raw/, or skip this to use the bundled sample data
+make load                     # loads DuckDB, enriches, builds rollups + schema-check
+make ui-install && make ui-build
+make run                      # http://localhost:8765
 ```
 
-No model yet? Develop the UI against keyword rules instead:
+Then open **http://localhost:8765**.
 
-```bash
-FINANCE_STUB_PLANNER=1 uvicorn app.api:app --reload
-```
+- `make ui-dev` runs the Vite dev server on **:5173** and proxies API calls to
+  the FastAPI backend on **:8765** — use it while actively editing
+  `frontend/src`.
+- **Fallback:** if the frontend build fails or was never run, FastAPI serves
+  `ui/index.html` automatically instead of `frontend/dist` — the app still
+  works end to end from a clean clone with zero npm involvement.
+- No model yet, or want to develop the UI without one? Run with the keyword
+  planner instead:
 
-Every response is then tagged STUB PLANNER on screen. Unset it before demoing.
+  ```bash
+  FINANCE_STUB_PLANNER=1 make run
+  ```
+
+  Every response is then tagged STUB PLANNER on screen. Unset it before
+  demoing.
 
 `GET /health` returns the **anchor date** — the assistant's "today", taken from
 the max date in the data rather than the wall clock.
+
+## Environment variables
+
+Everyone copies `.env.example` to `.env`. `.env` carries the endpoint and
+credentials only; `config/models.yaml` (committed, identical for everyone)
+decides which model runs and how it behaves.
+
+| Variable | Purpose |
+|---|---|
+| `GEMINI_API_KEY` | API key for Google AI Studio, used when `provider: gemini` in `config/models.yaml`. Get one at https://aistudio.google.com/apikey. |
+| `LLM_TIMEOUT` | Per-request timeout (seconds) for calls to the model endpoint. Defaults to 90. |
+| `LLM_PROVIDER` | Optional override of `provider:` in `config/models.yaml` (e.g. force `ollama` locally without editing the committed config). |
+| `LLM_BASE_URL` | Optional override of the inferred endpoint URL — set this to point at the shared Ollama host, e.g. `http://192.168.1.XXX:11434/v1`. |
+| `LLM_API_KEY` | Optional override of the API key sent to the endpoint (falls back to `GEMINI_API_KEY`, then the literal `ollama`). |
+| `FINANCE_AES_KEY` | AES-256 key for decrypting the organisers' encrypted columns at load time. Never commit a real value. |
+| `FINANCE_AES_IV` | AES initialization vector paired with `FINANCE_AES_KEY`. Never commit a real value. |
+| `FINANCE_AES_MODE` | Block cipher mode: `ctr` \| `cbc` \| `gcm`. Confirm the right mode for a given export with `scripts/crypto_probe.py` before trusting decrypted output. |
+| `FINANCE_STUB_PLANNER` | Dev-only escape hatch. Set to `1` to answer with a keyword-rule planner instead of calling a model — useful when no model server is reachable. Unset before demoing. |
 
 ## Model
 
@@ -131,11 +177,93 @@ no category, no chart of accounts, and no reconciliation status column.**
 - `account_number` and `utr_number` are masked in SQL before results leave the
   database.
 
+## API endpoints
+
+| Endpoint | Description |
+|---|---|
+| `POST /ask` | Full pipeline: question in, planner produces a `QuerySpec`, answer out. Supports multi-turn via `session_id`. |
+| `POST /ask_spec` | Runs the deterministic pipeline (validator → compiler → DuckDB → narrator) from a hand-written `QuerySpec`, with no model in the loop. |
+| `POST /export` | Returns the breakdown for a given spec as a CSV or XLSX file download. |
+| `GET /health` | Readiness check plus the **anchor date** (the assistant's "today", derived from the data, not the wall clock). |
+| `GET /scopes` | Lists the valid `scope_level` / `scope_value` options (all / entity / account). |
+| `GET /boundary` | Audit trail of what has actually been sent to the LLM — proof the model never sees raw data it shouldn't. |
+| `GET /efficiency` | Which model answered each question and the escalation rate, for the model-efficiency report. |
+
+## Running the evals
+
+```bash
+make eval            # score the currently configured model against the golden set
+make eval-stub       # score the keyword planner (no model) as a baseline
+make eval-freeze     # regenerate the frozen expected values from hand-verified specs
+make eval-compare    # run qwen3:1.7b / qwen3:4b / qwen3:8b, writing evals/report-<model>.md
+make model-check     # confirm you're on the shared model server before trusting any number
+```
+
+`evals/run_evals.py` scores three things separately, because they fail for
+different reasons:
+
+- **spec match** — did the planner understand the question (does the produced
+  `QuerySpec` match the hand-verified `expect_spec`)?
+- **value match** — did the pipeline compute the same number the verified spec
+  gives? (Expected values are always derived by running `expect_spec` through
+  the same engine, never hand-typed, so a human only ever checks the
+  interpretation, not the arithmetic.)
+- **refusal correctness** — did the assistant decline when the data genuinely
+  cannot answer the question, instead of guessing?
+
+`make model-check` runs a fixed canary prompt and compares its output hash to
+`config/canary.lock` — a mismatch means you're not talking to the same model
+the team's numbers were produced on.
+
+## Make targets
+
+| Target | What it does |
+|---|---|
+| `make setup` | Create `.venv`, install `requirements.txt`, copy `.env.example` to `.env` if missing. |
+| `make load` | Load the DuckDB database from `data/raw/` (or the bundled sample), enrich it, build rollups, then run `schema-check`. |
+| `make schema-check` | Verify the loaded schema matches the data dictionary and that derived objects were built. |
+| `make test` | Run the pytest suite. |
+| `make eval` | Run the accuracy harness against the golden set with the currently configured model. |
+| `make eval-stub` | Run the accuracy harness with the keyword planner instead of a model. |
+| `make eval-freeze` | Regenerate frozen expected values from hand-verified specs. |
+| `make eval-compare` | Run the eval harness across `qwen3:1.7b`, `qwen3:4b`, `qwen3:8b`, writing `evals/report-<model>.md` for each. |
+| `make run` | Start the FastAPI app (`uvicorn`, reload on) on `127.0.0.1:8765`. |
+| `make demo` | Run tests, then start the FastAPI app without reload — the demo-day command. |
+| `make checksum` | Hash the CSVs in `data/raw/` so teammates can confirm they have identical source data. |
+| `make clean` | Remove pytest/Python cache directories. |
+| `make model-build` | (Host only) Build the derived Ollama models baked with `config/models.yaml`'s sampling params. |
+| `make model-check` | Verify you're on the shared model server with the right models, via the canary prompt. |
+| `make model-lock` | Write the canary output hash to `config/canary.lock` (host, once, then commit it). |
+| `make enrich-report` | Re-runs the loader (alias for inspecting enrichment output). |
+| `make crypto-probe` | Profile the encrypted columns in the real export (cipher mode, determinism, joinability) before writing crypto-dependent code. |
+| `make data-local` | Generate a 200k-row local dataset and load it. |
+| `make data-prod` | Generate the full 20M-row parquet dataset and load it. |
+| `make bench` | Measure query latency against whatever is currently loaded. |
+| `make ui-install` | `npm install` in `frontend/`. |
+| `make ui-dev` | Run the Vite dev server on `:5173`, proxying API calls to `:8765`. |
+| `make ui-build` | Build the React app; FastAPI then serves `frontend/dist` at `/`. |
+| `make redteam` | Run the adversarial/red-team eval script against an Ollama-served model. |
+
 ## Status
 
 | Module | State |
 |---|---|
-| `db.py` `dates.py` `compiler.py` `validator.py` | deterministic core, testable now |
-| `api.py` | live, `/ask_spec` works without a model |
-| `planner.py` `narrator.py` | stubs — model integration pending |
-| `ui/` | empty |
+| `app/db.py`, `app/dates.py`, `app/compiler.py`, `app/validator.py` | Deterministic core — fully implemented and tested. |
+| `app/api.py` | Live. All endpoints below implemented; `/ask_spec` works with no model in the loop. |
+| `app/planner.py` | Implemented — LLM-backed `QuerySpec` planning with confidence/self-consistency and escalation. |
+| `app/narrator.py` | Implemented — LLM-backed narration with a numeric guard so the model never states a figure it didn't compute. |
+| `ui/index.html` | Implemented — complete no-build fallback chat UI, served automatically if `frontend/dist` isn't built. |
+| `frontend/` | React/Vite chat UI — build with `make ui-install && make ui-build`. |
+| Tests | **174 passing** (`make test`). |
+
+## Submission artifacts
+
+- `docs/architecture.md` — architecture diagrams *(generated at submission time)*
+- `docs/sample_qa.md` — sample questions and the answers the assistant actually
+  produced *(generated at submission time)*
+- `docs/model_efficiency.md` — which model answered what, escalation rate
+  *(generated at submission time)*
+- `evals/report-*.md` — per-model accuracy against the golden set, produced by
+  `make eval-compare`
+- `docs/deck.pptx` — problem, approach, model-choice rationale, demo flow
+  *(generated at submission time)*

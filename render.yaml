@@ -1,0 +1,63 @@
+# Render Blueprint for the ByteRide Finance Assistant.
+#
+# Docker is not used on purpose: the app is a single FastAPI process serving
+# a pre-built React bundle plus a DuckDB file built at deploy time, and
+# Render's native Python runtime already gives us that (its build image
+# bundles Node/npm too, so the frontend build needs no extra setup) -- see
+# docs/deploy.md for the "why not Docker / why not Vercel" reasoning.
+#
+# Deploy flow (nobody can run `render login` in an unattended session --
+# it needs a browser):
+#   1. `git push` this branch to GitHub.
+#   2. Render Dashboard -> New -> Blueprint -> connect the repo, or
+#      `render blueprints validate` locally then launch from the Dashboard.
+#   See docs/deploy.md for the exact steps and the confirmed CLI syntax.
+
+services:
+  - type: web
+    name: byteride-finance-assistant
+    runtime: python
+    # RAM is not the deciding factor here -- a full local timing run of the
+    # build below (200k-row generator + ETL) peaked at ~340MB RSS, and the
+    # heaviest single build step (npm run build) peaked at ~390MB, both well
+    # under the 512MB every plan (free and starter) ships with. `free` is set
+    # below because it deploys immediately with no billing setup (confirmed
+    # with `render blueprints validate` against the real connected Render
+    # account -- `plan: starter` fails validation there with
+    # `need_payment_info` since no card is on file, while `free` validates
+    # clean). The tradeoff: free web services spin down after 15 minutes of
+    # inactivity (~1 min cold start on the next request) and run on 0.1 CPU.
+    # For a live judged demo where that cold start is unacceptable, add a
+    # payment method in the Render dashboard and change this to
+    # `plan: starter` ($7/mo, 0.5 CPU, no spin-down) -- see docs/deploy.md.
+    plan: free
+    region: oregon
+    buildCommand: >-
+      pip install -r requirements.txt &&
+      cd frontend && npm ci && npm run build && cd .. &&
+      python scripts/generate_dataset.py --rows 200000 --no-encrypt &&
+      python scripts/load_data.py
+    startCommand: uvicorn app.api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false   # set in the Render dashboard -- never committed, never
+                       # copied from a local .env into this file
+      - key: LLM_TIMEOUT
+        value: "90"
+      # --no-encrypt above means the demo dataset's account numbers are
+      # plaintext (masked to last-4 at load time, never encrypted), so
+      # app/crypto.py's decrypt path is never exercised by this deployment
+      # and these can be left unset. They're declared here only so a future
+      # switch to real (encrypted) organiser data has somewhere to put the
+      # key without touching this file again.
+      - key: FINANCE_AES_KEY
+        sync: false
+      - key: FINANCE_AES_IV
+        sync: false
+      - key: FINANCE_AES_MODE
+        sync: false

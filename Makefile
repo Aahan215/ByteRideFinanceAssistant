@@ -1,4 +1,4 @@
-.PHONY: setup load test eval run demo checksum clean model-build model-check data-local data-prod bench schema-check
+.PHONY: setup load test eval run demo checksum clean model-build model-check data-local data-prod bench schema-check deploy-check
 
 setup:
 	python3 -m venv .venv
@@ -20,10 +20,10 @@ eval:
 	./.venv/bin/python evals/run_evals.py
 
 run:
-	./.venv/bin/uvicorn app.api:app --reload --port 8000
+	./.venv/bin/uvicorn app.api:app --reload --host 127.0.0.1 --port 8765
 
 demo: test
-	./.venv/bin/uvicorn app.api:app --port 8000
+	./.venv/bin/uvicorn app.api:app --host 127.0.0.1 --port 8765
 
 checksum:
 	@shasum -a 256 data/raw/*.csv 2>/dev/null || echo "no CSVs in data/raw/ yet"
@@ -65,8 +65,6 @@ bench:
 eval-stub:
 	./.venv/bin/python evals/run_evals.py --stub
 
-eval-freeze:
-	./.venv/bin/python evals/run_evals.py --freeze
 
 # Settle the model choice with evidence, not opinion.
 eval-compare:
@@ -83,3 +81,38 @@ ui-dev:
 
 ui-build:
 	cd frontend && npm run build    # FastAPI then serves frontend/dist at /
+
+redteam:
+	LLM_PROVIDER=ollama ./.venv/bin/python evals/run_redteam.py
+
+# --- deploy ---
+# Runs the render.yaml buildCommand steps end to end (frontend build, demo
+# dataset generation, ETL) plus the /health, /ask and / smoke checks, all
+# against a throwaway copy of the repo under $TMPDIR so data/finance.duckdb
+# and data/raw are never touched. See docs/deploy.md for the actual Render
+# deploy steps -- this only proves the build+serve path works locally.
+deploy-check:
+	@TMP=$$(mktemp -d "$${TMPDIR:-/tmp}/byteride-deploy-check.XXXXXX"); \
+	trap 'kill $$SERVER_PID 2>/dev/null; rm -rf "$$TMP"' EXIT; \
+	set -e; \
+	echo "== deploy-check: scratch dir $$TMP (real data/finance.duckdb and data/raw untouched) =="; \
+	echo "-- 1/4 frontend build --"; \
+	(cd frontend && npm ci --no-audit --no-fund && npm run build); \
+	echo "-- 2/4 demo dataset (200k rows, unencrypted) + ETL, isolated in $$TMP --"; \
+	rsync -a --exclude='.git' --exclude='.venv' --exclude='data/raw' \
+	      --exclude='data/finance.duckdb' --exclude='frontend/node_modules' \
+	      --exclude='frontend/dist' --exclude='.pytest_cache' . "$$TMP/"; \
+	./.venv/bin/python "$$TMP/scripts/generate_dataset.py" --rows 200000 --no-encrypt; \
+	./.venv/bin/python "$$TMP/scripts/load_data.py"; \
+	echo "-- 3/4 starting the API on :8790 against the scratch DB --"; \
+	PORT=8790 FINANCE_DB_PATH="$$TMP/data/finance.duckdb" FINANCE_STUB_PLANNER=1 \
+	  ./.venv/bin/uvicorn app.api:app --host 0.0.0.0 --port 8790 \
+	  > "$$TMP/uvicorn.log" 2>&1 & \
+	SERVER_PID=$$!; \
+	sleep 2; \
+	echo "-- 4/4 curl checks --"; \
+	curl -sf http://127.0.0.1:8790/health; echo; \
+	curl -sf -X POST http://127.0.0.1:8790/ask -H "Content-Type: application/json" \
+	     -d '{"question": "how much did I spend on groceries last month"}' | head -c 300; echo; \
+	curl -sf http://127.0.0.1:8790/ | head -c 200; echo; \
+	echo "deploy-check OK"

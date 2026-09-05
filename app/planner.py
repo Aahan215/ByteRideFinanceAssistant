@@ -17,6 +17,7 @@ The model NEVER computes a number and never sees a row of data.
 """
 from __future__ import annotations
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Callable
@@ -24,11 +25,32 @@ from typing import Callable
 from pydantic import ValidationError
 
 from app.db import SEMANTIC
-from app.llm import chat_json, CFG
+from app.llm import chat_json, CFG, MODELS, ModelUnavailable
 from app.nlq_dates import extract as extract_dates
 from app.spec import QuerySpec, DateRange
 
 ChatFn = Callable[..., dict]
+
+
+# --- escalation (BACKLOG M6) --------------------------------------------------
+# FINANCE_ESCALATE=0 is the one-line kill switch for a flaky/unpulled escalate
+# model; FINANCE_ESCALATE_THRESHOLD tunes how readily self-consistency (a 0..1
+# agreement ratio, see plan_with_confidence) reaches for the bigger tier. Read
+# at call time, not import time, so tests and `make eval` can flip them per run.
+def escalation_enabled() -> bool:
+    return os.getenv("FINANCE_ESCALATE", "1") != "0"
+
+
+def escalate_threshold() -> float:
+    # 0.6 sits strictly between the two non-perfect self-consistency ratios a
+    # 3-sample run produces (2/3 = .667 "medium", 1/3 = .333 "low"): "medium"
+    # stays on the small model, "low" escalates. Below the median score, not
+    # below the mean -- a model that only agreed with itself a third of the
+    # time is not a coin flip away from trustworthy.
+    try:
+        return float(os.getenv("FINANCE_ESCALATE_THRESHOLD", "0.6"))
+    except ValueError:
+        return 0.6
 
 # --- vocabulary, derived from the semantic layer so it cannot drift ----------
 DATASETS = list(SEMANTIC["datasets"])
@@ -209,7 +231,9 @@ def apply_refinement(prior: QuerySpec, r: dict) -> QuerySpec:
 OUT_OF_SCOPE = (
     # no leading \b: "unreconciled" has no boundary before "reconcil"
     (re.compile(r"\w*[-\s]?reconcil\w*|\bun[-\s]?matched\b|\bsettlement status\b|"
-                r"\bnot (yet )?(matched|settled|cleared)\b", re.I),
+                r"\bnot (yet )?(matched|settled|cleared)\b|"
+                r"\b(matched|match) (to|against|with) (a |the )?(bank )?statement\b|"
+                r"\bhas(n't| not) been matched\b", re.I),
      "This dataset has no reconciliation status. The transaction table records "
      "id, date, type, description, amount and reference numbers -- there is no "
      "field saying whether a transaction was matched to an external record, and "
@@ -226,6 +250,31 @@ OUT_OF_SCOPE = (
      "I have no accounting statements -- only bank transactions."),
     (re.compile(r"\binvoices?\b", re.I),
      "I have bank transactions, not invoices."),
+    # Judgement questions. "Am I spending too much on food?" has a factual
+    # core (the food total) and a verdict nobody can ground in a transaction
+    # table. Answering the core alone reads as dodging; say so and offer it.
+    (re.compile(r"\b(too (much|little|high|low|often)|enough|overspend\w*|"
+                r"under ?spend\w*|reasonable|excessive|worth it|better off|"
+                # NOT "should i": it also matches "where should I control the
+                # spend", the savings view we built a factual answer for. The
+                # genuine advice cases are caught by their own words.
+                r"good idea|bad idea|wise|sensible|afford|"
+                # "should I" only with an ACTION verb, so advice is caught but
+                # "where should I control the spend" (the savings view) is not
+                r"should (i|we) (invest|buy|sell|switch|stop|cancel|keep|move|"
+                r"pay off|prepay|save more|spend more|spend less))\b", re.I),
+     "That needs a judgement I cannot ground in your transactions -- there is no "
+     "budget or benchmark here to compare against. I can show the figure itself: "
+     "ask what you spent on it and I will give the exact amount and the records."),
+    # Privacy. Account numbers and UTRs are masked at load and the full values
+    # are not stored; a request for them must not be answered by a lookup that
+    # happens to return the mask.
+    (re.compile(r"\b(full|unmasked|complete|actual|real) (account|acc(oun)?t)? ?"
+                r"(number|no\.?|num)\b|\bunmask\w*|\breveal\b|"
+                r"\baccount numbers?\b|\butr (number|no)s?\b", re.I),
+     "Account numbers and UTRs are masked in this system and the full values "
+     "are not stored, so I cannot show them. I can identify an account by its "
+     "bank and last four digits."),
     # Commercial terms. A transaction records WHAT LEFT THE ACCOUNT -- there is
     # no price, no list price and no discount anywhere in the schema, so a
     # question about them can only be answered by inventing one.
@@ -718,24 +767,39 @@ class PlanResult:
     matched_date_text: str | None = None
     attempts: list[str] = field(default_factory=list)
     used_patch: bool = False
+    # Which model actually produced this spec, and whether that took a trip to
+    # the bigger tier -- the evidence behind the efficiency-report claim. None
+    # only when no model was consulted at all (a refusal decided before the
+    # first call, e.g. out-of-scope or a contentless question).
+    model_used: str | None = None
+    escalated: bool = False
 
 
 def _call(chat_fn: ChatFn | None, system: str, user: str, temperature: float | None,
-          schema: dict | None = None) -> dict:
+          schema: dict | None = None, role: str = "planner") -> dict:
     if chat_fn is not None:                 # tests inject a stand-in
-        return chat_fn("planner", system, user, temperature=temperature)
-    return chat_json("planner", system, user, temperature=temperature,
+        return chat_fn(role, system, user, temperature=temperature)
+    return chat_json(role, system, user, temperature=temperature,
                      schema=schema or planner_schema())
 
 
 def plan_detailed(question: str, prior: QuerySpec | None = None, *,
                   chat_fn: ChatFn | None = None,
-                  temperature: float | None = None) -> PlanResult:
+                  temperature: float | None = None,
+                  role: str = "planner") -> PlanResult:
     # Refuse before spending a model call on something the schema cannot answer.
     # NOT gated on `prior is None`. It was, and that meant any out-of-scope
     # question asked mid-conversation skipped the check entirely -- "which
     # transactions are unreconciled?" as a follow-up answered "Count: 0".
     # A follow-up about reconciliation is still about reconciliation.
+    # A question with no content words -- "?", "...", "" -- gives the model
+    # nothing to plan from, and it fills the gap from its own examples: "?" came
+    # back with a reference id copied verbatim from the few-shots.
+    if not re.search(r"[a-z]{3,}", question.lower()):
+        return PlanResult(QuerySpec(dataset="transactions", unsupported_reason=(
+            "I did not catch a question. Ask about spending, income, vendors, "
+            "categories or a time period.")), confidence="high", attempts=[])
+
     if reason := out_of_scope(question):
         return PlanResult(QuerySpec(dataset="transactions", unsupported_reason=reason),
                           confidence="high", attempts=[])
@@ -743,11 +807,18 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
     dr, matched = extract_dates(question)
     attempts: list[str] = []
     used_patch = False
+    # `role` names the tier this whole call runs on. It is "planner" for every
+    # normal request; plan_with_confidence re-invokes with role="escalate" when
+    # self-consistency is shaky, and the repair loop below escalates in place
+    # when the small model fails twice. Either way the model actually used is
+    # recorded here, not assumed from config.
+    model_used = MODELS.get(role, MODELS["planner"])
+    escalated = role != "planner"
 
     if looks_like_followup(question, prior):
         used_patch = True
         raw = _call(chat_fn, REFINE_PROMPT % describe_spec(prior), question,
-                    temperature, schema=refine_schema())
+                    temperature, schema=refine_schema(), role=role)
         attempts.append(json.dumps(raw)[:400])
         try:
             # Legacy patch shape (tests, and any model that ignores the
@@ -774,7 +845,7 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
             })
             dr = None
     else:
-        raw = _call(chat_fn, _prompt(), question, temperature)
+        raw = _call(chat_fn, _prompt(), question, temperature, role=role)
         attempts.append(json.dumps(raw)[:400])
         try:
             spec = QuerySpec(**coerce(raw))
@@ -782,16 +853,35 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
             # One repair round-trip with the actual error, then give up honestly.
             raw2 = _call(chat_fn, _prompt(),
                          f"{question}\n\nYour previous reply was invalid:\n{e}\n"
-                         f"Reply with corrected JSON only.", temperature)
+                         f"Reply with corrected JSON only.", temperature, role=role)
             attempts.append(json.dumps(raw2)[:400])
             try:
                 spec = QuerySpec(**coerce(raw2))
             except (ValidationError, CoercionError):
-                return PlanResult(
-                    QuerySpec(dataset="transactions",
-                              unsupported_reason="I could not turn that into a query I trust. "
-                                                 "Could you rephrase it?"),
-                    confidence="low", attempts=attempts)
+                spec = None
+                # Case (a): the small model failed to produce anything usable
+                # even after its own repair round-trip. Try once on the bigger
+                # tier before refusing -- but only if we are not already on it
+                # (role == "escalate" here would mean plan_with_confidence's
+                # own escalation attempt failed too, and escalating from the
+                # escalate tier is not a thing).
+                if role == "planner" and escalation_enabled():
+                    escalated = True
+                    try:
+                        raw3 = _call(chat_fn, _prompt(), question, temperature,
+                                     role="escalate")
+                        attempts.append(json.dumps(raw3)[:400])
+                        spec = QuerySpec(**coerce(raw3))
+                        model_used = MODELS["escalate"]
+                    except (ValidationError, CoercionError, ModelUnavailable):
+                        spec = None   # escalation did not help either
+                if spec is None:
+                    return PlanResult(
+                        QuerySpec(dataset="transactions",
+                                  unsupported_reason="I could not turn that into a query I trust. "
+                                                     "Could you rephrase it?"),
+                        confidence="low", attempts=attempts,
+                        model_used=model_used, escalated=escalated)
 
     # Only check a category this turn actually introduced. A follow-up inherits
     # the prior filter and will not re-mention it -- "what about the month
@@ -809,7 +899,8 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
                     "I do not derive that category from your transactions. I can "
                     f"break spending down by: "
                     f"{', '.join(c.lower().replace('_', ' ') for c in CATEGORIES)}.")),
-                confidence="high", attempts=attempts)
+                confidence="high", attempts=attempts,
+                model_used=model_used, escalated=escalated)
         elif verdict == "drop":
             spec = spec.model_copy(deep=True)
             spec.filters.category = None
@@ -819,7 +910,8 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
             QuerySpec(dataset=spec.dataset, unsupported_reason=(
                 "I do not derive that category from your transactions. I can "
                 f"break spending down by: {', '.join(CATEGORIES)}.")),
-            confidence="high", attempts=attempts)
+            confidence="high", attempts=attempts,
+            model_used=model_used, escalated=escalated)
 
     # Grouping by a dimension you have filtered to ONE value is degenerate: it
     # can only ever return a single row, and renders as a one-slice pie chart.
@@ -847,14 +939,41 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
     if dr is not None:
         spec = spec.model_copy(update={"date_range": dr})
 
+    # PROVENANCE. Every literal filter value must be traceable to the user's own
+    # words. The model copied a reference id from the prompt examples in reply
+    # to "?", and stuffed an unknown concept into description_contains for
+    # "warranty". A value that does not appear in the question came from
+    # nowhere -- drop it, and if nothing answerable remains, refuse.
+    if not used_patch:
+        qlow = question.lower()
+        f = spec.filters
+        invented = []
+        for field in ("reference_id", "description_contains"):
+            v = getattr(f, field)
+            if v and str(v).lower() not in qlow:
+                invented.append((field, v)); setattr(f, field, None)
+        for field in ("min_amount", "max_amount"):
+            v = getattr(f, field)
+            if v is not None and not any(
+                    abs(float(n.replace(",", "")) - float(v)) < 0.5
+                    for n in re.findall(r"\d[\d,]*\.?\d*", question) if n.replace(",", "")):
+                invented.append((field, v)); setattr(f, field, None)
+        if invented:
+            # Dropping is enough. Refusing here was wrong: "how much did I spend
+            # last month" plus an invented reference id is still a complete
+            # question once the reference id is gone.
+            attempts.append("dropped invented " + ", ".join(f"{k}={v!r}" for k, v in invented))
+
     # THE ALLOWLIST. Every content word in the question must map to something
     # this system can express. Constrained decoding cannot say "I can't", so
     # a question about a discount comes back as a valid top-vendors spec --
     # a different question, answered confidently. Anything unaccounted for
     # here is a concept nobody can express, so refuse and NAME it.
     from app.coverage import unresolved
+    # description_contains is deliberately NOT here: a free-text filter is
+    # exactly where an unexpressible concept gets smuggled, and counting it as
+    # coverage let "warranty" through.
     spec_terms = [v for v in (spec.filters.counterparty,
-                              spec.filters.description_contains,
                               spec.filters.bank_name) if v]
     if isinstance(spec.filters.counterparty, list):
         spec_terms = list(spec.filters.counterparty) + spec_terms[1:]
@@ -866,10 +985,20 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
                 f"I have no data about {named}. I can answer about spending and "
                 f"income by vendor, category, channel, bank and period -- ask me "
                 f"about one of those and I will show the transactions behind it.")),
-            confidence="high", attempts=attempts, date_source="n/a")
+            confidence="high", attempts=attempts, date_source="n/a",
+            model_used=model_used, escalated=escalated)
 
-    return PlanResult(spec, date_source="deterministic" if dr else "default",
-                      matched_date_text=matched, attempts=attempts, used_patch=used_patch)
+    # A spec only reaches here via escalation after the small model failed
+    # twice (case a) -- honest enough to call "medium", not "high": one clean
+    # shot on the bigger model, but with no self-consistency check behind it.
+    # A direct escalate-tier call (role="escalate" from plan_with_confidence,
+    # case b) is not downgraded here -- that path already required agreement
+    # to fall below threshold, and this is its one clean sample.
+    confidence = "medium" if (escalated and role == "planner") else "high"
+    return PlanResult(spec, confidence=confidence,
+                      date_source="deterministic" if dr else "default",
+                      matched_date_text=matched, attempts=attempts, used_patch=used_patch,
+                      model_used=model_used, escalated=escalated)
 
 
 def plan(question: str, prior: QuerySpec | None = None, **kw) -> QuerySpec:
@@ -904,5 +1033,22 @@ def plan_with_confidence(question: str, prior: QuerySpec | None = None, *,
             keys.append("__error__")
 
     agree = keys.count(keys[0])
-    first.confidence = "high" if agree == len(keys) else "medium" if agree > len(keys) / 2 else "low"
+    score = agree / len(keys)
+    first.confidence = "high" if score == 1.0 else "medium" if score > 0.5 else "low"
+
+    # Case (b): the small model produced a spec but could not agree with
+    # itself about it. Ask the bigger tier once, on the same question, and
+    # take its answer only if it actually validates -- a shaky small-model
+    # spec beats a hard escalation failure. Skip entirely if this request
+    # already escalated via the repair-loop path (case a): one escalation per
+    # request is enough evidence, and re-escalating an already-escalated
+    # answer would double-count it in the efficiency report for no benefit.
+    if not first.escalated and escalation_enabled() and score < escalate_threshold():
+        try:
+            candidate = plan_detailed(question, prior, chat_fn=chat_fn,
+                                      temperature=0.0, role="escalate")
+        except ModelUnavailable:
+            candidate = None
+        if candidate is not None and not candidate.spec.unsupported_reason:
+            return candidate
     return first

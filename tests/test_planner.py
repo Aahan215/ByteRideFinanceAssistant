@@ -91,10 +91,24 @@ def test_repair_loop_recovers_from_an_invalid_first_reply():
     assert r.spec.dataset == "payouts" and len(r.attempts) == 2
 
 
-def test_two_failures_refuse_rather_than_guess():
+def test_three_failures_refuse_rather_than_guess():
+    """Planner, planner repair, then the ESCALATION tier: if all three return
+    garbage the answer is an honest refusal, never a guess. (This test used to
+    supply two payloads; the cascade added a third call and it hit
+    StopIteration -- the test was stale, not the code.)"""
     bad = {"dataset": {"nested": "garbage"}, "group_by": {"also": "garbage"}}
-    r = plan_detailed("something incoherent", chat_fn=sequence(bad, bad))
+    r = plan_detailed("something incoherent", chat_fn=sequence(bad, bad, bad))
     assert r.spec.unsupported_reason and r.confidence == "low"
+
+
+def test_the_escalation_tier_can_rescue_a_failed_plan():
+    """The cascade earns its place here: the small model fails twice, the
+    bigger one gets one try, and a valid spec comes back instead of a refusal."""
+    bad = {"dataset": {"nested": "garbage"}, "group_by": {"also": "garbage"}}
+    good = {"dataset": "payouts", "metric": "sum_amount", "group_by": ["counterparty"]}
+    r = plan_detailed("where did I spend the most", chat_fn=sequence(bad, bad, good))
+    assert not r.spec.unsupported_reason
+    assert r.spec.group_by == ["counterparty"]
 
 
 def test_out_of_scope_question_is_refused():

@@ -9,7 +9,7 @@ channel out of each narration ONCE, so the assistant never does text parsing
 at answer time.
 """
 from __future__ import annotations
-import pathlib, string, sys, time
+import os, pathlib, string, sys, time
 import duckdb, pandas as pd, yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -17,7 +17,11 @@ sys.path.insert(0, str(ROOT))
 from app.enrich import parse, canonical_map     # noqa: E402
 from app.data_dictionary import duckdb_types    # noqa: E402
 
-RAW, SAMPLE, DB = ROOT / "data" / "raw", ROOT / "data" / "sample", ROOT / "data" / "finance.duckdb"
+RAW, SAMPLE = ROOT / "data" / "raw", ROOT / "data" / "sample"
+# Same override as app/db.py -- honoured here so `make load` (and this script
+# directly) can target a scratch database without touching the real one.
+DB = pathlib.Path(os.environ["FINANCE_DB_PATH"]) if os.getenv("FINANCE_DB_PATH") \
+    else ROOT / "data" / "finance.duckdb"
 SEMANTIC = yaml.safe_load((ROOT / "schema" / "semantic_layer.yaml").read_text())
 TABLES = ["bank", "account", "transaction"]
 

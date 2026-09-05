@@ -57,6 +57,9 @@ expense expenses outflow outgoing outbound receive received receiving receipt re
 income incoming inbound credit credits credited debit debits debited transaction
 transactions txn txns money amount amounts cash bought buy buying purchase purchases
 purchased cost costs send sends sent sending transferred remit remitted wire wired
+expenditure expenditures outlay outlays disbursement disbursements remittance
+remittances spending outgo fork forked shell shelled dish dished splurge splurged
+splash splashed frequent frequented visit visited visits patronise patronize
 """.split()
 
 DATE_WORDS = """
@@ -103,6 +106,8 @@ break breakdown broken down out up off over across through via using use used
 made make makes making go goes went going come comes came coming want wants
 wanted need needs needed like likes liked please thanks thank hey hi hello
 ok okay yes yeah sure right well let lets lot lots bit little much more most
+isn't aren't wasn't weren't hasn't haven't hadn't doesn't don't didn't can't
+couldn't won't wouldn't shouldn't isnt arent wasnt hasnt havent doesnt dont didnt
 whole entire overall everything anything something nothing where anywhere
 someone anyone everyone all both either neither around roughly approximately
 exactly about wise basis vs etc e.g i.e
@@ -158,6 +163,22 @@ def vendor_words() -> frozenset[str]:
         return frozenset()
 
 
+@functools.lru_cache(maxsize=1)
+def bank_words() -> frozenset[str]:
+    """Every word of every bank name, plus every bank code, so "SBIN", "kotak"
+    and "state bank" are covered. Vendor words were; bank words were not, and
+    "SBIN" was refused as a concept nobody could express."""
+    try:
+        rows = run("SELECT bank_code, bank_name FROM bank")
+        words: set[str] = set()
+        for code, name in rows.values:
+            words.add(str(code).lower())
+            words.update(w.lower() for w in str(name).split() if len(w) > 2)
+        return frozenset(words)
+    except Exception:
+        return frozenset()
+
+
 _TOKEN = re.compile(r"[a-z][a-z'-]+")
 
 
@@ -191,7 +212,7 @@ def unresolved(question: str, spec_terms: list[str] | None = None) -> list[str]:
         if len(tok) < 4:
             continue                                   # too short to be a concept
         forms = _stem(tok)
-        if forms & vocab or forms & vendors or forms & spec_words:
+        if forms & vocab or forms & vendors or forms & bank_words() or forms & spec_words:
             continue
         if tok not in out:
             out.append(tok)
