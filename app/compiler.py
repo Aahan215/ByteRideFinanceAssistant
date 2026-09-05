@@ -19,8 +19,18 @@ def _dim_expr(dim: str, date_col: str) -> str:
     return d["expr"].format(date=date_col) if "expr" in d else d["column"]
 
 
-def _where(spec: QuerySpec, date_col: str, amount_col: str) -> tuple[list[str], list]:
+def _where(spec: QuerySpec, date_col: str, amount_col: str,
+           scope=None) -> tuple[list[str], list]:
+    """THE choke point. Every query builder goes through here, which is why the
+    scope predicate lives here and not in each builder -- one path that forgets
+    it would leak another user's transactions."""
     where, params = [], []
+
+    if scope is not None:
+        pred, sparams = scope.predicate()
+        if pred:
+            where.append(pred)
+            params.extend(sparams)
     for field, value in spec.filters.model_dump().items():
         if value is None:
             continue
@@ -47,7 +57,7 @@ def _where(spec: QuerySpec, date_col: str, amount_col: str) -> tuple[list[str], 
     return where, params
 
 
-def compile_sql(spec: QuerySpec, anchor, date_range=None) -> tuple[str, list, dict]:
+def compile_sql(spec: QuerySpec, anchor, date_range=None, scope=None) -> tuple[str, list, dict]:
     ds = SEMANTIC["datasets"][spec.dataset]
     view, date_col, amt_col = ds["view"], ds["date_column"], ds["amount_column"]
 
@@ -63,7 +73,7 @@ def compile_sql(spec: QuerySpec, anchor, date_range=None) -> tuple[str, list, di
         # entry. Excluded here and reported separately, never silently dropped.
         notnull.append(f"{expr} IS NOT NULL")
 
-    where, params = _where(spec, date_col, amt_col)
+    where, params = _where(spec, date_col, amt_col, scope)
     where.extend(notnull)
     if ds.get("fixed_filter"):          # payouts = debits, receipts = credits
         where.insert(0, ds["fixed_filter"])
@@ -84,14 +94,14 @@ def compile_sql(spec: QuerySpec, anchor, date_range=None) -> tuple[str, list, di
     return sql, params, {"window": (start, end), "view": view}
 
 
-def compile_null_group_sql(spec: QuerySpec, anchor) -> tuple[str, list] | None:
+def compile_null_group_sql(spec: QuerySpec, anchor, scope=None) -> tuple[str, list] | None:
     """How much of the total is in rows the group dimension cannot name.
     Surfaced as a warning so a ranking never quietly omits real money."""
     if not spec.group_by:
         return None
     ds = SEMANTIC["datasets"][spec.dataset]
     view, date_col, amt_col = ds["view"], ds["date_column"], ds["amount_column"]
-    where, params = _where(spec, date_col, amt_col)
+    where, params = _where(spec, date_col, amt_col, scope)
     if ds.get("fixed_filter"):
         where.insert(0, ds["fixed_filter"])
     where.append(f"{_dim_expr(spec.group_by[0], date_col)} IS NULL")
@@ -104,12 +114,12 @@ def compile_null_group_sql(spec: QuerySpec, anchor) -> tuple[str, list] | None:
             f"WHERE {' AND '.join(where)}"), params
 
 
-def compile_count_sql(spec: QuerySpec, anchor) -> tuple[str, list]:
+def compile_count_sql(spec: QuerySpec, anchor, scope=None) -> tuple[str, list]:
     """How many transactions the answer actually rests on. Feeds the confidence
     signal -- an aggregate over six rows is not a trend."""
     ds = SEMANTIC["datasets"][spec.dataset]
     view, date_col, amt_col = ds["view"], ds["date_column"], ds["amount_column"]
-    where, params = _where(spec, date_col, amt_col)
+    where, params = _where(spec, date_col, amt_col, scope)
     if ds.get("fixed_filter"):
         where.insert(0, ds["fixed_filter"])
     for dim in spec.group_by:
@@ -125,7 +135,7 @@ def compile_count_sql(spec: QuerySpec, anchor) -> tuple[str, list]:
     return sql, params
 
 
-def compile_anomaly_sql(spec: QuerySpec, anchor, limit: int = 3):
+def compile_anomaly_sql(spec: QuerySpec, anchor, limit: int = 3, scope=None):
     """Unusual amounts among ALL rows the answer covers.
 
     Reads the flags materialised at load time, so this is a filter on a sparse
@@ -133,7 +143,7 @@ def compile_anomaly_sql(spec: QuerySpec, anchor, limit: int = 3):
     """
     ds = SEMANTIC["datasets"][spec.dataset]
     view, date_col, amt_col = ds["view"], ds["date_column"], ds["amount_column"]
-    where, params = _where(spec, date_col, amt_col)
+    where, params = _where(spec, date_col, amt_col, scope)
     if ds.get("fixed_filter"):
         where.insert(0, ds["fixed_filter"])
     start, end = resolve(spec.date_range, anchor)
@@ -164,13 +174,13 @@ def evidence_columns() -> str:
         if rule["mask"] == "last4":
             # Already masked at load time from the DECRYPTED value -- masking
             # here would slice ciphertext and produce a convincing-looking lie.
-            masked.append(f"account_number_masked AS {col}")
+            masked.append(f"CAST({col} AS VARCHAR) AS {col}")
         else:
             masked.append(f"CASE WHEN {col} IS NULL THEN NULL ELSE '[redacted]' END AS {col}")
     return ", ".join(cols + masked)
 
 
-def compile_evidence_sql(spec: QuerySpec, anchor, limit: int = 200):
+def compile_evidence_sql(spec: QuerySpec, anchor, limit: int = 200, scope=None):
     """The rows behind the number. Required by 'verifiable answers'.
 
     Must apply EVERY predicate the aggregate applies, including the
@@ -180,7 +190,7 @@ def compile_evidence_sql(spec: QuerySpec, anchor, limit: int = 200):
     """
     ds = SEMANTIC["datasets"][spec.dataset]
     view, date_col, amt_col = ds["view"], ds["date_column"], ds["amount_column"]
-    where, params = _where(spec, date_col, amt_col)
+    where, params = _where(spec, date_col, amt_col, scope)
     if ds.get("fixed_filter"):
         where.insert(0, ds["fixed_filter"])
     for dim in spec.group_by:

@@ -65,8 +65,12 @@ def test_the_mask_comes_from_the_decrypted_value_not_the_ciphertext():
     discarded, so the store holds no plaintext account number at all."""
     from app.compiler import evidence_columns
     cols = evidence_columns()
-    assert "account_number_masked AS account_number" in cols
-    assert "CAST(account_number" not in cols
+    # The property, not the column name: no mask is CONSTRUCTED here. The
+    # loader already stored "XXXXXX" + the decrypted last four, so the query
+    # only passes it through.
+    assert "account_number" in cols
+    assert "XXXXXX" not in cols and "right(" not in cols
+    assert "[redacted]" in cols          # utr is never shown at all
     assert "utr_number" in cols and "[redacted]" in cols
 
 

@@ -78,6 +78,21 @@ Nothing here scans a table at answer time that a rollup could serve, and the
 enrichment never holds more than one chunk in memory — the first thing that
 breaks when local row counts become production row counts.
 
+## Who the assistant answers for
+
+No auth system (out of scope per the brief), but a selector: **all accounts**,
+one **entity** (a customer, which may own several accounts), or a single
+**account**. Every query is constrained to the choice.
+
+The scope is applied in `_where()` in the compiler — the one function all five
+query builders go through — so no path can forget it. It is deliberately **not**
+part of `QuerySpec`: the model cannot see it, set it, or widen it. An unknown
+scope is rejected rather than falling back to `all`, since a silent widening
+would show one user everyone else's data.
+
+`GET /scopes` lists the options; `/ask`, `/ask_spec` and `/export` all take
+`scope_level` and `scope_value`.
+
 ## Architecture
 
 ```

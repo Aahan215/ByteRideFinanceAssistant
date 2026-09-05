@@ -61,3 +61,20 @@ export interface Message {
   pending?: boolean
   error?: string
 }
+
+
+export type ScopeLevel = 'all' | 'entity' | 'account'
+
+export interface ScopeOption {
+  level: ScopeLevel
+  value?: string
+  label: string
+  txns: number
+  accounts?: number
+}
+
+export interface Scopes {
+  all: ScopeOption
+  entities: ScopeOption[]
+  accounts: ScopeOption[]
+}

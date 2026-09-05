@@ -1,4 +1,4 @@
-import type { Answer, Health } from './types'
+import type { Answer, Health, ScopeOption, Scopes } from './types'
 
 const json = { 'Content-Type': 'application/json' }
 
@@ -8,11 +8,22 @@ export async function health(): Promise<Health> {
   return r.json()
 }
 
-export async function ask(question: string, sessionId: string): Promise<Answer> {
+export async function scopes(): Promise<Scopes> {
+  const r = await fetch('/scopes')
+  if (!r.ok) throw new Error(`scopes ${r.status}`)
+  return r.json()
+}
+
+export async function ask(
+  question: string, sessionId: string, scope: ScopeOption,
+): Promise<Answer> {
   const r = await fetch('/ask', {
     method: 'POST',
     headers: json,
-    body: JSON.stringify({ question, session_id: sessionId }),
+    body: JSON.stringify({
+      question, session_id: sessionId,
+      scope_level: scope.level, scope_value: scope.value ?? null,
+    }),
   })
   if (!r.ok) throw new Error(`ask failed: ${r.status} ${await r.text()}`)
   return r.json()

@@ -43,7 +43,7 @@ Copy into GitHub Issues so blockers are visible.
 | # | Ticket | Size | Notes |
 |---|---|---|---|
 | E1 | ~~`compare_to`~~ | — | **done**, incl. unequal-period guard |
-| E2 | Entity scope enforced on every query | S | "my spends" needs an owner |
+| E2 | ~~Scope enforced on every query~~ | — | **done** — all/entity/account selector, 19 tests |
 | E3 | Route to `rollup_counterparty_month` when the grain allows | M | Demo latency |
 | E4 | ~~CSV / Excel export~~ | — | **done** — `POST /export` |
 | E5 | Anomaly z-score flags | M | Bonus |

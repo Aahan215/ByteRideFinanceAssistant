@@ -16,7 +16,7 @@ import duckdb
 import pandas as pd
 
 from app.dates import resolve, describe
-from app import validator, narrator, anomaly, confidence
+from app import validator, narrator, anomaly, confidence, scope as scope_mod
 
 app = FastAPI(title="Finance Assistant")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -34,6 +34,9 @@ def _clean(df) -> list[dict]:
 class Ask(BaseModel):
     question: str
     session_id: str = "default"
+    # Selector, not auth. See app/scope.py.
+    scope_level: str = "all"
+    scope_value: str | None = None
 
 
 class Comparison(BaseModel):
@@ -60,7 +63,7 @@ class Answer(BaseModel):
     spec: dict | None = None       # what we actually ran -- powers export + "show your working"
 
 
-def answer_spec(spec: QuerySpec, question: str = "") -> Answer:
+def answer_spec(spec: QuerySpec, question: str = "", scope=None) -> Answer:
     """Everything downstream of the planner. Testable with hand-written specs,
     which is why the backend team is not blocked on the model team."""
     v = validator.validate(spec)
@@ -68,9 +71,9 @@ def answer_spec(spec: QuerySpec, question: str = "") -> Answer:
         return Answer(answer=v.refusal or v.clarification, refused=True, confidence="n/a")
 
     spec = v.repaired
-    sql, params, meta = compile_sql(spec, anchor_date())
+    sql, params, meta = compile_sql(spec, anchor_date(), scope=scope)
     df = run(sql, params)
-    ev_sql, ev_params = compile_evidence_sql(spec, anchor_date())
+    ev_sql, ev_params = compile_evidence_sql(spec, anchor_date(), scope=scope)
     ev = run(ev_sql, ev_params)
 
     window = describe(*resolve(spec.date_range, anchor_date()))
@@ -78,7 +81,7 @@ def answer_spec(spec: QuerySpec, question: str = "") -> Answer:
 
     warnings = list(v.warnings)
     excluded_rows = 0
-    nulls = compile_null_group_sql(spec, anchor_date())
+    nulls = compile_null_group_sql(spec, anchor_date(), scope=scope)
     if nulls:
         nrow = run(*nulls)
         excluded, nrows = nrow.iloc[0]["excluded"], int(nrow.iloc[0]["rows"])
@@ -92,7 +95,7 @@ def answer_spec(spec: QuerySpec, question: str = "") -> Answer:
     comparison = None
     before = len(warnings)
     if spec.compare_to is not None:
-        comparison = _compare(spec, df, warnings)
+        comparison = _compare(spec, df, warnings, scope)
         text = narrator.with_comparison(text, comparison, spec)
     mismatch = any("differ in length" in w for w in warnings[before:])
 
@@ -102,7 +105,7 @@ def answer_spec(spec: QuerySpec, question: str = "") -> Answer:
     # "no anomalies found", which hid a broken query through two test rounds.
     flags = []
     try:
-        flags = anomaly.from_scan(run(*compile_anomaly_sql(spec, anchor_date())))
+        flags = anomaly.from_scan(run(*compile_anomaly_sql(spec, anchor_date(), scope=scope)))
     except duckdb.CatalogException:
         pass                          # stats table not built yet -- fine
     except Exception as e:
@@ -110,7 +113,7 @@ def answer_spec(spec: QuerySpec, question: str = "") -> Answer:
     if flags:
         text = narrator.with_anomalies(text, flags)
 
-    row_count = int(run(*compile_count_sql(spec, anchor_date())).iloc[0]["n"])
+    row_count = int(run(*compile_count_sql(spec, anchor_date(), scope=scope)).iloc[0]["n"])
     a = confidence.assess(spec=spec, row_count=row_count, excluded_rows=excluded_rows,
                           warnings=warnings, comparison_mismatch=mismatch)
 
@@ -122,7 +125,7 @@ def answer_spec(spec: QuerySpec, question: str = "") -> Answer:
                   spec=spec.model_dump(mode="json"))
 
 
-def _compare(spec: QuerySpec, df, warnings: list[str]) -> Comparison:
+def _compare(spec: QuerySpec, df, warnings: list[str], scope=None) -> Comparison:
     """Period-over-period. Runs the SAME spec against a second window and diffs
     the results here -- the model is never asked to subtract two numbers."""
     anchor = anchor_date()
@@ -146,7 +149,7 @@ def _compare(spec: QuerySpec, df, warnings: list[str]) -> Comparison:
         return round(100.0 * (now - before) / abs(before), 1)
 
     if not spec.group_by:
-        prev_sql, prev_params, _ = compile_sql(spec, anchor, date_range=spec.compare_to)
+        prev_sql, prev_params, _ = compile_sql(spec, anchor, date_range=spec.compare_to, scope=scope)
         prev = run(prev_sql, prev_params)
         now = float(df.iloc[0, -1]) if len(df) and pd.notna(df.iloc[0, -1]) else None
         was = float(prev.iloc[0, -1]) if len(prev) and pd.notna(prev.iloc[0, -1]) else None
@@ -161,8 +164,8 @@ def _compare(spec: QuerySpec, df, warnings: list[str]) -> Comparison:
     # `df` is the limited display result, so the current window is re-queried
     # wide here rather than reused.
     wide = spec.model_copy(update={"limit": 10_000})
-    now_df = run(*compile_sql(wide, anchor)[:2])
-    prev_df = run(*compile_sql(wide, anchor, date_range=spec.compare_to)[:2])
+    now_df = run(*compile_sql(wide, anchor, scope=scope)[:2])
+    prev_df = run(*compile_sql(wide, anchor, date_range=spec.compare_to, scope=scope)[:2])
     merged = now_df.merge(prev_df, on=key, how="outer", suffixes=("", "_prev"))
 
     # A group absent from one window means zero spend there, not unknown --
@@ -219,15 +222,23 @@ STUB = os.getenv("FINANCE_STUB_PLANNER") == "1"
 def ask(req: Ask):
     from app.llm import ModelUnavailable
 
-    prior = SESSIONS.get(req.session_id)
+    try:
+        scope = scope_mod.parse(req.scope_level, req.scope_value)
+    except ValueError as e:
+        return Answer(answer=str(e), refused=True, confidence="n/a")
+
+    # A scope change starts a new conversation: a follow-up refining the
+    # previous user's question would be nonsense, and would carry their filters.
+    key = f"{req.session_id}:{scope.level}:{scope.value}"
+    prior = SESSIONS.get(key)
 
     if STUB:
         # Development aid only -- see app/stub_planner.py.
         from app.stub_planner import plan as stub_plan
         spec = stub_plan(req.question, prior)
-        out = answer_spec(spec, req.question)
+        out = answer_spec(spec, req.question, scope=scope)
         if not out.refused:
-            SESSIONS[req.session_id] = spec
+            SESSIONS[key] = spec
         out.confidence = "n/a"
         out.warnings.insert(0, "STUB PLANNER — keyword rules, not the language "
                                "model. Unset FINANCE_STUB_PLANNER before demoing.")
@@ -239,13 +250,13 @@ def ask(req: Ask):
     except ModelUnavailable as e:
         return Answer(answer=str(e), refused=True, confidence="n/a")
 
-    out = answer_spec(result.spec, req.question)
+    out = answer_spec(result.spec, req.question, scope=scope)
 
     # Only a turn we could actually answer becomes context for the next one.
     # Storing a refusal means the follow-up ("how does that compare?") refines
     # the thing we just declined to answer, instead of the last real result.
     if not out.refused:
-        SESSIONS[req.session_id] = result.spec
+        SESSIONS[key] = result.spec
 
     if not out.refused:
         # Fold the model's self-consistency into the deterministic assessment
@@ -263,7 +274,8 @@ def ask(req: Ask):
 
 
 @app.post("/export")
-def export(spec: QuerySpec, fmt: str = "csv"):
+def export(spec: QuerySpec, fmt: str = "csv", scope_level: str = "all",
+           scope_value: str | None = None):
     """The breakdown as a file. 'Good to have' in the problem statement, and
     one of the cheapest points on the board."""
     from fastapi.responses import StreamingResponse
@@ -272,7 +284,8 @@ def export(spec: QuerySpec, fmt: str = "csv"):
     v = validator.validate(spec)
     if not v.ok:
         return {"error": v.refusal or v.clarification}
-    sql, params, _ = compile_sql(v.repaired, anchor_date())
+    sql, params, _ = compile_sql(v.repaired, anchor_date(),
+                                 scope=scope_mod.parse(scope_level, scope_value))
     df = run(sql, params)
 
     buf = io.BytesIO()
@@ -308,6 +321,12 @@ def efficiency():
 
 
 @app.post("/ask_spec", response_model=Answer)
-def ask_spec(spec: QuerySpec):
+def ask_spec(spec: QuerySpec, scope_level: str = "all", scope_value: str | None = None):
     """Bypasses the LLM entirely. Lets the UI and eval work start on day one."""
-    return answer_spec(spec)
+    return answer_spec(spec, scope=scope_mod.parse(scope_level, scope_value))
+
+
+@app.get("/scopes")
+def scopes():
+    """What the selector offers: all accounts, each entity, each account."""
+    return scope_mod.available()
