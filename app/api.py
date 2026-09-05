@@ -78,7 +78,7 @@ def answer_spec(spec: QuerySpec, question: str = "") -> Answer:
         excluded, nrows = nrow.iloc[0]["excluded"], int(nrow.iloc[0]["rows"])
         if nrows:
             warnings.append(
-                f"{excluded:,.2f} across {nrows:,} transactions has no "
+                f"{narrator.inr(excluded)} across {nrows:,} transactions has no "
                 f"{spec.group_by[0]} we could identify (tax, bank charges and "
                 f"cash have no payee) and is not in this breakdown.")
 
