@@ -1,5 +1,7 @@
 # Architecture Diagram
 
+> For the ETL/data path, eval harness and per-module table see [docs/architecture.md](../docs/architecture.md).
+
 ```mermaid
 graph TB
     subgraph Frontend["Frontend (React + Vite)"]
@@ -87,10 +89,9 @@ graph TB
     Planner -->|QuerySpec| Spec
     AskEndpoint -.->|STUB mode| StubPlanner
 
-    %% Escalation (design -- landing in app/planner.py; config/models.yaml
-    %% already declares the "escalate" role, no caller wired to it yet)
-    Validator -.->|"failed validation (planned): re-plan"| Planner
-    Planner -.->|"low confidence or failed validation (planned): role=escalate, qwen3:8b"| LLM
+    %% Escalation (implemented in app/planner.py)
+    Validator -->|failed validation: re-plan| Planner
+    Planner -->|low confidence or failed validation: role=escalate, qwen3:8b| LLM
     LLM -->|usage log, app/llm.py USAGE| EfficiencyEndpoint
 
     %% API → Validation → Execution
@@ -178,11 +179,11 @@ sequenceDiagram
     Val->>Duck: check counterparty/category exist
     Val-->>API: Verdict(ok, repaired spec)
 
-    opt confidence=low or validation failed -- design, landing in app/planner.py
+    opt confidence=low or validation failed (escalation implemented in app/planner.py)
         API->>Plan: re-plan(question, role=escalate)
         Plan->>LLM: chat_json(role=escalate, qwen3:8b)
         LLM-->>Plan: {dataset, metric, filters, group_by}
-        Plan-->>API: PlanResult(QuerySpec, confidence)
+        Plan-->>API: PlanResult(QuerySpec, confidence, escalated=true)
         Note over LLM: call appended to the USAGE log (app/llm.py),<br/>surfaced later via GET /efficiency
     end
 

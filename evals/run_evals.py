@@ -65,9 +65,12 @@ def run_case(case, planner, priors: dict):
     result = planner(case["question"], prior)
     latency = time.perf_counter() - t0
     spec = result if isinstance(result, QuerySpec) else result.spec
-    # The stub and a bare QuerySpec carry no model attribution; plan_detailed
-    # always returns a PlanResult, which does.
-    model_used = getattr(result, "model_used", None) or "stub"
+    # --stub returns a bare QuerySpec (no model attribution at all), and
+    # plan_detailed itself reports model_used=None for a refusal decided
+    # before any model call (out-of-scope, a contentless question). Both are
+    # genuinely "no model was consulted" -- label them the same, rather than
+    # calling a real planner's deterministic refusal "stub", which it is not.
+    model_used = getattr(result, "model_used", None) or "none (no model call)"
     escalated = bool(getattr(result, "escalated", False))
     priors[case["id"]] = spec
     return spec, latency, model_used, escalated

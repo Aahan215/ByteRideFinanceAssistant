@@ -70,3 +70,40 @@ def test_a_truncated_vendor_name_is_the_same_merchant():
     resolved, candidates, how = resolve_counterparty("zomato", known)
     assert how == "family" and resolved is not None
     assert "ZOMATO HYPERPURE" in resolved and "SWIGGY INSTAMART" not in resolved
+
+
+def test_an_exact_match_with_branch_variants_resolves_to_the_family():
+    """The user typed the exact canonical name, and the data ALSO holds
+    several branch-suffixed variants of it (same shape as the production
+    ZOMATO HYPERPURE / DMART AVENUE SUPERMARTS vendors, each with a city
+    suffix). The exact hit must resolve straight to the whole family --
+    asking "which did you mean?" here is the bug this guards against."""
+    known = ["ZOMATO HYPERPURE", "ZOMATO HYPERPURE ANDHERI WEST",
+             "ZOMATO HYPERPURE BANDRA", "ZOMATO HYPERPURE KORAMANGALA",
+             "SWIGGY INSTAMART"]
+    resolved, candidates, how = resolve_counterparty("ZOMATO HYPERPURE", known)
+    assert how == "family" and not candidates
+    assert set(resolved) == set(known) - {"SWIGGY INSTAMART"}
+
+
+def test_an_exact_match_behind_a_shared_legal_suffix_is_still_one_family():
+    """Some vendors carry a legal suffix ("LTD") between the canonical name
+    and the branch/city name, so every extension shares the SAME next word.
+    A next-word-divergence check alone sees no divergence and was returning
+    the base name alone, silently dropping every branch from the total."""
+    known = ["WESTSIDE TRENT", "WESTSIDE TRENT LTD ANDHERI WEST",
+             "WESTSIDE TRENT LTD DAHISAR EAST", "SWIGGY INSTAMART"]
+    resolved, candidates, how = resolve_counterparty("WESTSIDE TRENT", known)
+    assert how == "family" and not candidates
+    assert set(resolved) == set(known) - {"SWIGGY INSTAMART"}
+
+
+def test_an_exact_match_that_is_also_a_stem_for_different_entities_still_asks():
+    """The exact-match path now shares the family helper with subset-match,
+    but a lone word that is itself an exact vendor AND the stem of several
+    DIFFERENT people ("RAJESH" -> AGARWAL / BHATT / CHATTERJEE) must still
+    ask instead of silently summing across people who are not one merchant."""
+    known = ["RAJESH", "RAJESH AGARWAL", "RAJESH BHATT", "RAJESH CHATTERJEE"]
+    resolved, candidates, how = resolve_counterparty("Rajesh", known)
+    assert resolved is None and how == "ambiguous"
+    assert len(candidates) >= 2

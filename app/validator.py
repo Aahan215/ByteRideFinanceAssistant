@@ -79,19 +79,24 @@ def resolve_counterparty(value: str, known: list[str]
         toks = v.split()
         ext = [orig for norm, orig in index.items()
                if norm != v and norm.split()[:len(toks)] == toks]
-        next_words = {n.split()[len(toks)] for n in index
-                      if n != v and n.split()[:len(toks)] == toks}
-        if len(ext) > 1 and len(next_words) > 1:
-            # Divergent extensions. Whether that means DIFFERENT ENTITIES or
-            # BRANCHES OF ONE depends on the base:
-            #   "RAJESH"                  + AGARWAL / BHATT   -> different people, ask
-            #   "DMART AVENUE SUPERMARTS" + ANDHERI / DAHISAR -> branches, sum them
-            # A lone first name plus a surname is a new person; a full multi-word
-            # business name plus a suffix is a location. Asking "which DMart?" is
-            # pedantry, and it was refusing the exact canonical name.
-            if len(toks) == 1:
+        if ext:
+            next_words = {n.split()[len(toks)] for n in index
+                          if n != v and n.split()[:len(toks)] == toks}
+            # Divergent extensions of a LONE WORD are likely DIFFERENT
+            # ENTITIES, not one merchant: "RAJESH" + AGARWAL / BHATT is two
+            # different people, so ask rather than silently pick the stub.
+            # A full multi-word business name plus a suffix, by contrast, is
+            # always branch noise on one merchant -- and so is a lone word
+            # with only ONE way to extend it ("STAR" + "STAR COMMUNICATION",
+            # "WESTSIDE TRENT" + "WESTSIDE TRENT LTD <city>"): there is no
+            # real ambiguity to ask about, just a legal/location suffix.
+            # Either way, reuse the same family test the subset-match pass
+            # below uses instead of guessing again from scratch.
+            if len(toks) == 1 and len(next_words) > 1:
                 return None, sorted([index[v]] + ext)[:5], "ambiguous"
-            return sorted([index[v]] + ext), [], "family"
+            fam = _family([index[v]] + ext)
+            if fam:
+                return fam, [], "family"
         return index[v], [], "exact"
 
     # 2. every word the user gave appears in the vendor name. This is the case
@@ -147,7 +152,10 @@ def resolve_bank(value: str) -> tuple[str | None, list[str], str]:
     v = " ".join(str(value).upper().split())
     if not v or not banks:
         return None, [], "unknown"
-    v_alnum = "".join(ch for ch in v if ch.isalnum())
+    # Strip the generic words BEFORE the abbreviation check: "SBI bank" became
+    # "SBIBANK", which is neither a prefix of SBIN nor starts with it.
+    core = " ".join(w for w in v.split() if w not in ("BANK", "LTD", "LIMITED", "THE", "OF"))
+    v_alnum = "".join(ch for ch in (core or v) if ch.isalnum())
 
     # 1. exact on name or code, case-insensitive
     for code, name in banks:

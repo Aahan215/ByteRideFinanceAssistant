@@ -1,5 +1,7 @@
 # Architecture
 
+> For the full system graph and request sequence diagram see [../ARCHITECTURE.md](../ARCHITECTURE.md).
+
 This is a natural-language finance Q&A assistant: a question in plain English
 becomes a `QuerySpec` (a small, validated JSON contract), the `QuerySpec` is
 compiled deterministically into parameterised SQL, DuckDB executes it, and a

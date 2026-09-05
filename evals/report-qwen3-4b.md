@@ -15,13 +15,13 @@
 | refusal | 11 | 11 | 100% |
 | vendor | 2 | 2 | 100% |
 
-planner latency: p50 1608ms, max 29456ms
+planner latency: p50 2461ms, max 4290ms
 
 ### Model usage
 
 | model | cases | share | accuracy |
 |---|---:|---:|---:|
 | qwen3:4b | 44 | 80% | 100% |
-| stub | 11 | 20% | 100% |
+| none (no model call) | 11 | 20% | 100% |
 
 escalation rate: 0/55 (0%)
