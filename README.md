@@ -271,9 +271,8 @@ the team's numbers were produced on.
   *(generated at submission time)*
 - `evals/report-*.md` — per-model accuracy against the golden set, produced by
   `make eval-compare`
-- `docs/deck.pptx` — problem, approach, model-choice rationale, demo flow
-  *(not yet produced — no deck file exists in this repo or the `feature`
-  branch as of this writing; add it here once it's built)*
+- [`docs/deck.pptx`](docs/deck.pptx) / [`docs/deck.pdf`](docs/deck.pdf) —
+  problem, approach, model-choice rationale, demo flow
 - **Live deployment:** https://byteride-finance-assistant.onrender.com
   (free tier, cold start up to ~1 min, hosted Gemini models, synthetic
   200k-row dataset)

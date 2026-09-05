@@ -1,4 +1,4 @@
-### Accuracy — planner `qwen3:1.7b`
+### Accuracy — planner `qwen3:4b`
 
 | bucket | correct | total | % |
 |---|---:|---:|---:|
@@ -15,13 +15,13 @@
 | refusal | 11 | 11 | 100% |
 | vendor | 2 | 2 | 100% |
 
-planner latency: p50 490ms, max 927ms
+planner latency: p50 1591ms, max 16330ms
 
 ### Model usage
 
 | model | cases | share | accuracy |
 |---|---:|---:|---:|
-| qwen3:1.7b | 46 | 81% | 100% |
+| qwen3:4b | 46 | 81% | 100% |
 | none (no model call) | 11 | 19% | 100% |
 
 escalation rate: 0/57 (0%)
