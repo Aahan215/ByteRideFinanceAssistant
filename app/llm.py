@@ -20,6 +20,18 @@ ROLES = CFG["roles"]
 MODELS = {r: c["derived"] for r, c in ROLES.items()}
 
 
+def set_model(role: str, model: str) -> None:
+    """Point one role at a different model for this process only.
+
+    Used by the eval harness to run the same golden set across candidates --
+    the model-choice bonus wants evidence, not an opinion. Never call this from
+    request-handling code: the committed config is what makes the team's
+    numbers comparable.
+    """
+    ROLES[role] = {**ROLES[role], "derived": model}
+    MODELS[role] = model
+
+
 class ModelUnavailable(RuntimeError):
     """Raised loudly on purpose. A silent fallback to a different model would
     destroy the one property this whole setup exists to guarantee."""

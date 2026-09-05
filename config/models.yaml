@@ -6,6 +6,17 @@
 
 host:
   owner: "TODO: name"        # who runs the server
+  ram_gb: 16                 # drives the model sizes below
+  family: qwen2.5            # one family throughout -- prompt behaviour differs
+                             # enough between families that re-tuning the planner
+                             # few-shots mid-hackathon would cost hours
+
+# Comparison models, pulled for the model-efficiency table (BACKLOG Q4).
+# Not used at runtime.
+comparison:
+  - qwen3:0.6b
+  - qwen3:4b
+  - qwen3:8b
   note: "Single shared inference server. Do NOT run your own Ollama."
 
 # Sampling params are baked into derived models on the host (see
@@ -13,7 +24,7 @@ host:
 # to send them.
 roles:
   router:
-    base: qwen3:0.6b
+    base: qwen2.5:0.5b
     derived: fin-router:v1
     temperature: 0
     top_p: 1.0
@@ -22,21 +33,22 @@ roles:
                              # explicitly or long prompts behave differently
                              # on different hosts.
   planner:
-    base: qwen3:8b
+    base: qwen2.5:3b
     derived: fin-planner:v1
     temperature: 0
     top_p: 1.0
     seed: 42
     num_ctx: 8192            # the QuerySpec schema + few-shots are long
   narrator:
-    base: qwen3:8b
+    base: qwen2.5:3b
     derived: fin-narrator:v1
     temperature: 0.2         # slight variation reads better in prose;
     top_p: 0.9               # the numeric guard makes this safe
     seed: 42
     num_ctx: 4096
   escalate:
-    base: gpt-oss:20b        # host RAM permitting; else qwen3:14b
+    base: qwen2.5:7b         # 16GB host: 3B + 7B co-resident (~6.5GB).
+                             # gpt-oss:20b needs ~24GB and would thrash.
     derived: fin-escalate:v1
     temperature: 0
     top_p: 1.0

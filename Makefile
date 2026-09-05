@@ -57,3 +57,15 @@ data-prod:
 
 bench:
 	./.venv/bin/python scripts/benchmark.py
+
+eval-stub:
+	./.venv/bin/python evals/run_evals.py --stub
+
+eval-freeze:
+	./.venv/bin/python evals/run_evals.py --freeze
+
+# Settle the model choice with evidence, not opinion.
+eval-compare:
+	@for m in qwen2.5:3b llama3.2:3b qwen2.5:7b; do \
+		./.venv/bin/python evals/run_evals.py --model $$m --out evals/report-$$m.md || true; \
+	done

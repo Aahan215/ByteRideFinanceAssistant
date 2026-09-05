@@ -1,25 +1,289 @@
-# Build this BEFORE the UI. It is your accuracy number, your model-choice
-# evidence, and your regression net. Aim for 50 questions.
-# Include unanswerable + ambiguous ones -- a correct refusal scores as correct.
+# Golden set — the accuracy number for the deck, and the regression net.
+#
+# HOW TO ADD A QUESTION (10 per person, ~50 total):
+#   1. Write the question the way a real user would say it.
+#   2. Write `expect_spec` with ONLY the fields that matter. It is a subset
+#      match, so you do not have to specify everything.
+#   3. Eyeball it. That is the human verification step -- you are checking the
+#      INTERPRETATION, not arithmetic. Expected values are derived by running
+#      your verified spec (`make eval-freeze`), so nobody hand-computes sums.
+#   4. For an unanswerable question use `expect_refusal: true`. A correct
+#      refusal scores as a correct answer -- that is the point.
+#
+# tags drive the per-category accuracy breakdown in the report.
 
-- id: q1
-  question: How much did we spend on vendor payouts last month?
-  expect_spec: {dataset: vendor_payouts, metric: sum_amount, date_range: {kind: relative, unit: month, offset: -1}}
-  expect_value: null   # fill in by hand once data lands
+# ---------- simple aggregates ----------
+- id: agg_spend_last_month
+  tags: [aggregate, dates]
+  question: How much did I spend last month?
+  expect_spec: {dataset: payouts, metric: sum_amount, date_range: {kind: relative, unit: month, offset: -1}}
 
-- id: q2
-  question: Which transactions are still unreconciled?
-  expect_spec: {dataset: transactions, filters: {status: unreconciled}, metric: count}
+- id: agg_spend_this_month
+  tags: [aggregate, dates]
+  question: How much have I spent this month?
+  expect_spec: {dataset: payouts, metric: sum_amount, date_range: {kind: relative, unit: month, offset: 0}}
 
-- id: q3
+- id: agg_received_last_month
+  tags: [aggregate]
+  question: How much money came in last month?
+  expect_spec: {dataset: receipts, metric: sum_amount, date_range: {kind: relative, unit: month, offset: -1}}
+
+- id: agg_count_last_month
+  tags: [aggregate, metric]
+  question: How many payments did I make last month?
+  expect_spec: {dataset: payouts, metric: count, date_range: {kind: relative, unit: month, offset: -1}}
+
+- id: agg_tax_3_months
+  tags: [aggregate, category, dates]
+  question: Total tax I paid in the last 3 months
+  expect_spec: {dataset: payouts, metric: sum_amount, filters: {category: TAX},
+                date_range: {kind: relative, unit: month, offset: 0, periods: 3}}
+
+- id: agg_charges_quarter
+  tags: [aggregate, category]
+  question: How much did I pay in bank charges this quarter?
+  expect_spec: {dataset: payouts, metric: sum_amount, filters: {category: BANK_CHARGES},
+                date_range: {kind: relative, unit: quarter, offset: 0}}
+
+- id: agg_largest_payment
+  tags: [aggregate, metric]
+  question: What was my largest payment last month?
+  expect_spec: {dataset: payouts, metric: max_amount, date_range: {kind: relative, unit: month, offset: -1}}
+
+- id: agg_all_time
+  tags: [aggregate]
+  question: What is my total spend overall?
+  expect_spec: {dataset: payouts, metric: sum_amount, date_range: {kind: all_time}}
+
+# ---------- grouped ----------
+- id: grp_top_vendor_month
+  tags: [grouped, dates]
+  question: Where did I spend the most this month?
+  expect_spec: {dataset: payouts, metric: sum_amount, group_by: [counterparty],
+                date_range: {kind: relative, unit: month, offset: 0}}
+
+- id: grp_by_category
+  tags: [grouped]
+  question: Break my spending down by category
+  expect_spec: {dataset: payouts, metric: sum_amount, group_by: [category]}
+
+- id: grp_top_vendors_quarter
+  tags: [grouped, dates]
+  question: Who were my top vendors last quarter?
+  expect_spec: {dataset: payouts, metric: sum_amount, group_by: [counterparty],
+                date_range: {kind: relative, unit: quarter, offset: -1}}
+
+- id: grp_by_month
+  tags: [grouped, dates]
+  question: Show my monthly spending trend
+  expect_spec: {dataset: payouts, metric: sum_amount, group_by: [month]}
+
+- id: grp_by_bank
+  tags: [grouped]
+  question: How does my spending split across banks?
+  expect_spec: {dataset: payouts, metric: sum_amount, group_by: [bank_name]}
+
+- id: grp_by_channel
+  tags: [grouped]
+  question: Which payment channel do I use most?
+  expect_spec: {dataset: payouts, metric: sum_amount, group_by: [channel]}
+
+- id: grp_receipts_by_category
+  tags: [grouped]
+  question: Break my incoming money down by category
+  expect_spec: {dataset: receipts, metric: sum_amount, group_by: [category]}
+
+- id: grp_count_by_category
+  tags: [grouped, metric]
+  question: How many transactions in each category?
+  expect_spec: {dataset: payouts, metric: count, group_by: [category]}
+
+- id: grp_vendors_by_count
+  tags: [grouped, metric]
+  question: Which vendors do I pay most often?
+  expect_spec: {dataset: payouts, metric: count, group_by: [counterparty]}
+
+- id: grp_channel_last_month
+  tags: [grouped, dates]
+  question: Spending by payment channel last month
+  expect_spec: {dataset: payouts, metric: sum_amount, group_by: [channel],
+                date_range: {kind: relative, unit: month, offset: -1}}
+
+# ---------- filtered ----------
+- id: flt_vendor_zomato
+  tags: [filter, vendor]
+  question: How much have I paid Zomato Hyperpure?
+  expect_spec: {dataset: payouts, metric: sum_amount, filters: {counterparty: ZOMATO HYPERPURE}}
+
+- id: flt_vendor_dmart
+  tags: [filter, vendor]
+  question: What is my total spend at DMart?
+  expect_spec: {dataset: payouts, metric: sum_amount, filters: {counterparty: DMART AVENUE SUPERMARTS}}
+
+- id: flt_utilities
+  tags: [filter, category]
+  question: How much did I spend on utilities last month?
+  expect_spec: {dataset: payouts, metric: sum_amount, filters: {category: UTILITIES},
+                date_range: {kind: relative, unit: month, offset: -1}}
+
+- id: flt_emi_quarter
+  tags: [filter, category]
+  question: What did I pay in EMIs last quarter?
+  expect_spec: {dataset: payouts, metric: sum_amount, filters: {category: EMI_LOAN},
+                date_range: {kind: relative, unit: quarter, offset: -1}}
+
+- id: flt_upi
+  tags: [filter, channel]
+  question: How much did I send over UPI last month?
+  expect_spec: {dataset: payouts, metric: sum_amount, filters: {channel: UPI},
+                date_range: {kind: relative, unit: month, offset: -1}}
+
+- id: flt_investments
+  tags: [filter, category, dates]
+  question: How much have I invested in the last 6 months?
+  expect_spec: {dataset: payouts, metric: sum_amount, filters: {category: INVESTMENT},
+                date_range: {kind: relative, unit: month, offset: 0, periods: 6}}
+
+- id: flt_insurance
+  tags: [filter, category]
+  question: What have I paid in insurance premiums?
+  expect_spec: {dataset: payouts, metric: sum_amount, filters: {category: INSURANCE}}
+
+- id: flt_rent
+  tags: [filter, category, dates]
+  question: How much rent did I pay in the last 3 months?
+  expect_spec: {dataset: payouts, metric: sum_amount, filters: {category: RENT},
+                date_range: {kind: relative, unit: month, offset: 0, periods: 3}}
+
+- id: flt_cash
+  tags: [filter, category]
+  question: How much cash did I withdraw last month?
+  expect_spec: {dataset: payouts, metric: sum_amount, filters: {category: CASH},
+                date_range: {kind: relative, unit: month, offset: -1}}
+
+# ---------- dates ----------
+- id: dt_absolute_range
+  tags: [dates]
+  question: What did I spend between 2026-01-01 and 2026-03-31?
+  expect_spec: {dataset: payouts, metric: sum_amount,
+                date_range: {kind: absolute, start: '2026-01-01', end: '2026-03-31'}}
+
+- id: dt_named_month
+  tags: [dates]
+  question: What did I spend in May 2026?
+  expect_spec: {dataset: payouts, metric: sum_amount,
+                date_range: {kind: absolute, start: '2026-05-01', end: '2026-05-31'}}
+
+- id: dt_last_7_days
+  tags: [dates]
+  question: What have I spent in the last 7 days?
+  expect_spec: {dataset: payouts, metric: sum_amount,
+                date_range: {kind: relative, unit: day, offset: 0, periods: 7}}
+
+- id: dt_last_year
+  tags: [dates]
+  question: How much did I spend last year?
+  expect_spec: {dataset: payouts, metric: sum_amount,
+                date_range: {kind: relative, unit: year, offset: -1}}
+
+- id: dt_this_quarter
+  tags: [dates]
+  question: What is my spend this quarter?
+  expect_spec: {dataset: payouts, metric: sum_amount,
+                date_range: {kind: relative, unit: quarter, offset: 0}}
+
+- id: dt_yesterday
+  tags: [dates]
+  question: What did I spend yesterday?
+  expect_spec: {dataset: payouts, metric: sum_amount,
+                date_range: {kind: relative, unit: day, offset: -1}}
+
+# ---------- multi-turn ----------
+- id: mt_compare_month
+  tags: [multiturn]
+  after: grp_top_vendor_month
   question: How does that compare to the month before?
-  follow_up_to: q1
-  expect_spec: {dataset: vendor_payouts, metric: sum_amount, date_range: {kind: relative, unit: month, offset: -2}}
+  expect_spec: {dataset: payouts, group_by: [counterparty]}
+  expect_comparison: true
 
-- id: q4_refusal
-  question: What is our headcount forecast for next year?
-  expect_refusal: true   # not in the schema -- must say so, not invent
+- id: mt_tax_previous
+  tags: [multiturn]
+  after: agg_tax_3_months
+  question: And the 3 months before that?
+  expect_spec: {dataset: payouts, filters: {category: TAX}}
 
-- id: q5_ambiguous
-  question: How much did we pay Acme?
-  expect_clarification: true   # no date range and possibly multiple Acme entities
+- id: mt_narrow_to_tax
+  tags: [multiturn]
+  after: grp_by_category
+  question: Just show me tax
+  expect_spec: {dataset: payouts, filters: {category: TAX}}
+
+- id: mt_regroup
+  tags: [multiturn]
+  after: grp_top_vendor_month
+  question: Break that down by category instead
+  expect_spec: {dataset: payouts, group_by: [category]}
+
+- id: mt_vendor_last_month
+  tags: [multiturn]
+  after: flt_vendor_zomato
+  question: What about just last month?
+  expect_spec: {dataset: payouts, filters: {counterparty: ZOMATO HYPERPURE},
+                date_range: {kind: relative, unit: month, offset: -1}}
+
+# ---------- refusals (a correct refusal is a correct answer) ----------
+- id: ref_reconciliation
+  tags: [refusal]
+  question: Which transactions are still unreconciled?
+  expect_refusal: true
+
+- id: ref_credit_score
+  tags: [refusal]
+  question: What is my credit score?
+  expect_refusal: true
+
+- id: ref_forecast
+  tags: [refusal]
+  question: How much will I spend next month?
+  expect_refusal: true
+
+- id: ref_budget
+  tags: [refusal]
+  question: Am I over budget this month?
+  expect_refusal: true
+
+- id: ref_pnl
+  tags: [refusal]
+  question: Show me my profit and loss statement
+  expect_refusal: true
+
+- id: ref_net_worth
+  tags: [refusal]
+  question: What is my net worth?
+  expect_refusal: true
+
+- id: ref_tax_owed
+  tags: [refusal]
+  question: How much tax do I still owe this year?
+  expect_refusal: true
+
+- id: ref_invoices
+  tags: [refusal]
+  question: Show me all invoices from Acme Corp
+  expect_refusal: true
+
+# ---------- ambiguous (clarify, never guess) ----------
+- id: amb_unknown_vendor
+  tags: [ambiguous]
+  question: How much did I pay Northwind Traders?
+  expect_refusal: true          # no such counterparty in the data
+
+- id: amb_unknown_category
+  tags: [ambiguous]
+  question: How much did I spend on groceries?
+  expect_refusal: true          # not a category we derive
+
+- id: amb_bare_word
+  tags: [ambiguous]
+  question: spend
+  expect_spec: {dataset: payouts, metric: sum_amount}   # a total is the honest reading

@@ -78,7 +78,7 @@ Copy into GitHub Issues so blockers are visible.
 | # | Ticket | Size | Notes |
 |---|---|---|---|
 | Q1 | 50 golden questions (10 per person) | M | **Day one, no dependencies** |
-| Q2 | Hand-verify expected answers by writing the SQL yourself | **L** | Tedious; it is the whole point |
+| Q2 | Verify each `expect_spec` by eye, then `make eval-freeze` | M | You check the *interpretation*; the engine derives the number |
 | Q3 | Eval runner after every merge | M | `make eval` |
 | Q4 | Model comparison: 0.6B vs 8B vs 20B on the golden set | M | **This table is your model-efficiency score** |
 | Q5 | Architecture diagram | S | |
