@@ -33,3 +33,15 @@
   -webkit-text-fill-color: transparent;
 }
 .empty h2 { font-size: 24px; letter-spacing: -.02em; }
+
+/* A product mark, ported from origin/feature. The header was a bare string. */
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-mark {
+  width: 30px; height: 30px; border-radius: 8px;
+  background: var(--gradient);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: 13px; letter-spacing: -.02em;
+  flex-shrink: 0;
+}
+.topbar { height: 60px; padding: 0 24px; }
+.topbar h1 { font-size: 17px; font-weight: 700; letter-spacing: -.02em; }

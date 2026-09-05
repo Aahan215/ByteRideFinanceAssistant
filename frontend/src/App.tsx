@@ -45,7 +45,10 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <h1>Finance Assistant</h1>
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">FA</span>
+          <h1>Finance Assistant</h1>
+        </div>
         {anchor ? (
           <span className="anchor">
             Data through <b>{anchor.toLocaleDateString('en-IN',

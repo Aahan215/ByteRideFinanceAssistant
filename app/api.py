@@ -264,7 +264,11 @@ def index():
     """
     from fastapi.responses import FileResponse
     built = DIST / "index.html"
-    return FileResponse(built if built.exists() else ROOT / "ui" / "index.html")
+    # index.html is NOT content-hashed, so a cached copy keeps pointing at the
+    # previous asset filenames and a rebuild appears to change nothing. The
+    # assets themselves are hashed and stay cacheable.
+    return FileResponse(built if built.exists() else ROOT / "ui" / "index.html",
+                        headers={"Cache-Control": "no-store, must-revalidate"})
 
 
 if DIST.exists():

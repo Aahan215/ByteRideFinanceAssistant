@@ -236,3 +236,6 @@
 .callout--anomaly { border-left: 3px solid var(--accent); }
 
 .clarify-option:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+.bubble--answer { padding: 18px 20px; }
+.bubble--answer:hover { box-shadow: var(--shadow-lg); }
