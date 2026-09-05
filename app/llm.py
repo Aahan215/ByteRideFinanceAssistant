@@ -111,7 +111,12 @@ def _chat_ollama(role: str, cfg: dict, model: str, system: str, user: str,
     r.raise_for_status()
     data = r.json()
     USAGE.append({"role": role, "model": model, "tokens": data.get("eval_count")})
-    content = (data.get("message") or {}).get("content")
+    msg = data.get("message") or {}
+    content = msg.get("content")
+    # A thinking model can spend the whole budget reasoning and return empty
+    # content with the reasoning still populated. Better to use it than to fail.
+    if not (content or "").strip() and msg.get("thinking"):
+        content = msg["thinking"]
     if not content:
         raise ModelUnavailable(
             f"{model} returned no content. Reasoning tokens can consume the whole "
@@ -208,6 +213,14 @@ def chat_json(role: str, system: str, user: str, *, temperature: float | None = 
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
+
+    # Small models wrap JSON in markdown fences far more often than large ones.
+    fenced = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", raw.strip(), flags=re.M)
+    if fenced != raw:
+        try:
+            return json.loads(fenced)
+        except json.JSONDecodeError:
+            pass
 
     m = re.search(r"\{.*\}", raw, re.S)
     if m:

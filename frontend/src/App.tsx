@@ -51,6 +51,9 @@ export default function App() {
               { month: 'long', year: 'numeric' })}
           </span>
         ) : <span className="anchor">backend unreachable</span>}
+        {meta?.stale && meta.warning && (
+          <span className="anchor-warning" role="alert">{meta.warning}</span>
+        )}
       </header>
 
       <div className="feed" ref={feedRef}>

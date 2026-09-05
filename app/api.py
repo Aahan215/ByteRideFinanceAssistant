@@ -187,7 +187,8 @@ def _compare(spec: QuerySpec, df, warnings: list[str]) -> Comparison:
 def health():
     """The anchor date matters to the UI: it is the assistant's "today", so a
     banner can tell the user what "this month" actually resolves to."""
-    return {"ok": True, "anchor_date": str(anchor_date())}
+    from app.db import anchor_status
+    return {"ok": True, "anchor_date": str(anchor_date()), **anchor_status()}
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent

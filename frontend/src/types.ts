@@ -43,8 +43,14 @@ export interface Answer {
 
 export interface Health {
   ok: boolean
-  /** The assistant's "today" -- the latest date in the DATA, not the clock. */
+  /** The assistant's "today". See `anchor.mode` in the semantic layer. */
   anchor_date: string
+  /** "data" (latest transaction) or "wall_clock" (the real date). */
+  mode?: 'data' | 'wall_clock'
+  data_latest?: string
+  /** True when the anchor is ahead of the data, so relative dates match nothing. */
+  stale?: boolean
+  warning?: string | null
 }
 
 export interface Message {

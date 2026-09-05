@@ -208,9 +208,13 @@ def apply_refinement(prior: QuerySpec, r: dict) -> QuerySpec:
 # returned Rs 42 crore, "unreconciled" became a reference_id and returned 0.
 OUT_OF_SCOPE = (
     # no leading \b: "unreconciled" has no boundary before "reconcil"
-    (re.compile(r"\w*reconcil\w*", re.I),
-     "This dataset has no reconciliation status -- there is no field recording "
-     "whether a transaction was matched to an external record."),
+    (re.compile(r"\w*[-\s]?reconcil\w*|\bun[-\s]?matched\b|\bsettlement status\b|"
+                r"\bnot (yet )?(matched|settled|cleared)\b", re.I),
+     "This dataset has no reconciliation status. The transaction table records "
+     "id, date, type, description, amount and reference numbers -- there is no "
+     "field saying whether a transaction was matched to an external record, and "
+     "I will not infer one. I can show transactions with or without a reference "
+     "number if that helps."),
     (re.compile(r"\bbudget(s|ed|ing)?\b", re.I),
      "I have no budgets. I can only report what was actually spent."),
     (re.compile(r"\b(forecast|predict|projection|will i spend|next (month|quarter|year))\b", re.I),
@@ -323,6 +327,8 @@ RULES:
 - "spend"/"paid"/"payouts" = dataset "payouts" (debits).
 - "received"/"credits"/"income" = dataset "receipts" (credits).
 - "where did I spend the most" = group_by ["counterparty"] on payouts.
+- NEVER copy a vendor name from the examples. Extract the EXACT name the user typed.
+- "EMI" before a name means category EMI_LOAN and counterparty = the name after EMI.
 
 FIELDS:
   dataset: {DATASETS}  (payouts=debits, receipts=credits, transactions=both)
@@ -388,6 +394,15 @@ Q: Top 5 vendors by spend
 Q: Quarterly spending breakdown
 {{"dataset":"payouts","metric":"sum_amount","group_by":["quarter"],"filters":{{}}}}
 
+Q: How much did we pay EMI to HDFC Home Loans?
+{{"dataset":"payouts","metric":"sum_amount","group_by":[],"filters":{{"counterparty":"HDFC Home Loans","category":"EMI_LOAN"}}}}
+
+Q: What do you think about this vendor?
+{{"unsupported_reason":"I can only report what is in your transactions, not form opinions. Try 'how much did we pay [vendor]?'"}}
+
+Q: Why is this amount so high?
+{{"unsupported_reason":"I cannot explain why an amount is high or low. I can show the breakdown -- try 'break down spending by category'."}}
+
 Q: What is my credit score?
 {{"unsupported_reason":"I only have transaction data; no credit score information available."}}
 
@@ -436,7 +451,13 @@ FOLLOWUP_HINTS = (
     " that ", " that?", " those ", " those?", " it ", " it?",
     "instead", "but for", "but with", "just show", "just the",
     "only the", "narrow", "drill", "break it", "break that", "what if",
+    # pronouns can only refer to a previous turn
+    "pay him", "pay her", "pay them", "paid him", "paid her", "paid them",
+    "from him", "from her", "from them", "to him", "to her", "to them",
 )
+# NOTE: date phrases ("last month", "this month", "previous", "earlier") are
+# deliberately NOT hints. They appear in perfectly standalone questions --
+# "how much did I spend last month?" is not a refinement of anything.
 
 
 def looks_like_followup(question: str, prior: QuerySpec | None) -> bool:

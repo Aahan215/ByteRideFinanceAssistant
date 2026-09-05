@@ -238,3 +238,41 @@ def test_a_category_the_user_never_named_is_not_trusted():
     assert category_is_supported("total tax paid", "TAX")
     assert category_is_supported("my electricity bills", "UTILITIES")
     assert category_is_supported("anything", None)
+
+
+def test_reconciliation_is_refused_in_every_phrasing():
+    """The schema has no reconciliation field. The model must never infer one --
+    a 'Count: 0' here reads as 'you have zero unreconciled transactions'."""
+    from app.planner import out_of_scope
+    for q in ["Which transactions are unreconciled?", "un-reconciled items",
+              "show unmatched entries", "what is the settlement status?",
+              "which payments are not yet cleared?", "reconcile my account",
+              "reconciliation report"]:
+        assert out_of_scope(q), q
+
+
+def test_date_phrases_are_not_treated_as_follow_ups():
+    """"How much did I spend last month?" is a standalone question, not a
+    refinement of whatever came before."""
+    prior = QuerySpec(dataset="payouts", filters=Filters(counterparty="ZOMATO"))
+    for q in ["How much did I spend last month?", "this month total?",
+              "what did I spend previously"]:
+        assert not looks_like_followup(q, prior), q
+
+
+def test_pronouns_are_follow_ups():
+    prior = QuerySpec(dataset="payouts")
+    for q in ["how much did I pay him?", "what did I receive from them?"]:
+        assert looks_like_followup(q, prior), q
+
+
+def test_markdown_fenced_json_is_parsed():
+    """Small models wrap JSON in fences far more often than large ones."""
+    import app.llm as llm
+    orig = llm.chat
+    llm.chat = lambda *a, **k: '```json\n{"dataset": "payouts", "metric": "count"}\n```'
+    try:
+        got = llm.chat_json("planner", "s", "u")
+    finally:
+        llm.chat = orig
+    assert got == {"dataset": "payouts", "metric": "count"}

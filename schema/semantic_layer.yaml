@@ -3,9 +3,19 @@
 # bank -> account -> transaction. Indian bank narrations, INR, single company.
 
 anchor:
-  # "today" = the latest transaction in the data, NOT the wall clock.
-  # The dataset runs to mid-2026; wall-clock relative dates would return
-  # zero rows for every question.
+  # What "today" means when resolving "this month", "last quarter", etc.
+  #
+  #   data        the latest transaction in the dataset  (default)
+  #   wall_clock  the real current date
+  #
+  # Override per-process with FINANCE_ANCHOR_MODE=data|wall_clock.
+  #
+  # `data` is the right default for a historical export: this dataset ends
+  # 2026-06-30, so wall-clock "this month" matches ZERO rows and the assistant
+  # answers "no transactions found" for every relative-date question -- a
+  # silent, confident wrong answer. Use `wall_clock` only when the data is
+  # live and current; the app warns when the two disagree.
+  mode: data
   source: transaction.transaction_date
 
 # The one queryable view. Built at load time in scripts/load_data.py so the
