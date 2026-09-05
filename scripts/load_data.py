@@ -9,7 +9,7 @@ channel out of each narration ONCE, so the assistant never does text parsing
 at answer time.
 """
 from __future__ import annotations
-import pathlib, sys
+import pathlib, sys, time
 import duckdb, pandas as pd, yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -34,26 +34,55 @@ def load_source(con) -> str:
     sys.exit("No data found. Put the organisers' CSVs in data/raw/.")
 
 
-def enrich(con) -> dict:
-    """Parse narrations -> counterparty + channel. Reports coverage, because an
-    honest coverage number is worth more in the deck than an implied 100%."""
-    df = con.execute('SELECT transaction_id, description FROM "transaction"').df()
-    parsed = [parse(d) for d in df["description"]]
-    out = pd.DataFrame({
-        "transaction_id": df["transaction_id"],
-        "channel": [p.channel for p in parsed],
-        "counterparty_raw": [p.counterparty_raw for p in parsed],
-        "counterparty": [p.counterparty for p in parsed],
-        "parsed_by": [p.parsed_by for p in parsed],
-        "category": [p.category for p in parsed],
-        "category_by": [p.category_by for p in parsed],
-    })
-    con.register("parsed_df", out)
-    con.execute("CREATE OR REPLACE TABLE txn_parsed AS SELECT * FROM parsed_df")
-    hit = int(out["counterparty"].notna().sum())
-    return {"rows": len(out), "counterparty_hits": hit,
-            "coverage": round(hit / len(out), 4) if len(out) else 0.0,
-            "by_rule": out["parsed_by"].value_counts().to_dict()}
+CHUNK = 250_000
+
+
+def enrich(con, chunk: int = CHUNK) -> dict:
+    """Parse narrations -> counterparty + category + channel.
+
+    Chunked deliberately: pulling 20M descriptions into one Python list costs
+    several GB and is the first thing that breaks when local row counts become
+    production row counts. Throughput is ~95k rows/sec single-threaded, so
+    20M is roughly 3.5 minutes of one-time ETL.
+
+    Reports coverage, because an honest coverage number is worth more in the
+    deck than an implied 100%.
+    """
+    total = con.execute('SELECT COUNT(*) FROM "transaction"').fetchone()[0]
+    con.execute("""CREATE OR REPLACE TABLE txn_parsed (
+        transaction_id VARCHAR, channel VARCHAR, counterparty_raw VARCHAR,
+        counterparty VARCHAR, parsed_by VARCHAR, category VARCHAR, category_by VARCHAR)""")
+
+    hits, by_rule, done, t0 = 0, {}, 0, time.time()
+    while done < total:
+        df = con.execute('SELECT transaction_id, description FROM "transaction" '
+                         'LIMIT ? OFFSET ?', [chunk, done]).df()
+        if df.empty:
+            break
+        parsed = [parse(d) for d in df["description"]]
+        out = pd.DataFrame({
+            "transaction_id": df["transaction_id"],
+            "channel": [p.channel for p in parsed],
+            "counterparty_raw": [p.counterparty_raw for p in parsed],
+            "counterparty": [p.counterparty for p in parsed],
+            "parsed_by": [p.parsed_by for p in parsed],
+            "category": [p.category for p in parsed],
+            "category_by": [p.category_by for p in parsed],
+        })
+        con.register("parsed_chunk", out)
+        con.execute("INSERT INTO txn_parsed SELECT * FROM parsed_chunk")
+        con.unregister("parsed_chunk")
+
+        hits += int(out["counterparty"].notna().sum())
+        for k, v in out["parsed_by"].value_counts().items():
+            by_rule[k] = by_rule.get(k, 0) + int(v)
+        done += len(df)
+        print(f"  enriching {done:,}/{total:,} "
+              f"({done/max(time.time()-t0, 1e-9):,.0f} rows/s)", end="\r", flush=True)
+
+    print(" " * 70, end="\r")
+    return {"rows": done, "counterparty_hits": hits,
+            "coverage": round(hits / done, 4) if done else 0.0, "by_rule": by_rule}
 
 
 def build_view(con):
@@ -74,6 +103,8 @@ def build_view(con):
 
 
 def build_rollups(con):
+    # Rollups collapse the 80% case (vendor/category by month) to a few
+    # thousand rows, so those answers stay sub-millisecond at any table size.
     con.execute("""
         CREATE OR REPLACE TABLE rollup_counterparty_month AS
         SELECT date_trunc('month', transaction_date) AS month,

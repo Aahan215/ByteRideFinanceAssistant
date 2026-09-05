@@ -17,6 +17,35 @@ uvicorn app.api:app --reload
 `GET /health` returns the **anchor date** — the assistant's "today", taken from
 the max date in the data rather than the wall clock.
 
+## Local vs production scale
+
+Develop against a small local set; the pipeline is built to run at production
+volume unchanged.
+
+```bash
+make data-local     # 200k rows, regenerates in ~1s
+make data-prod      # 20M rows, parquet
+make bench          # measured query latency at whatever is loaded
+```
+
+Measured on 2M rows (M-series laptop, DuckDB):
+
+| query | p50 |
+|---|---|
+| spend by vendor, one month | 34 ms |
+| total tax, 3 months | 13 ms |
+| category breakdown, full table | 45 ms |
+| drill-down evidence, 200 rows | 18 ms |
+| spend by vendor, via rollup | **2.7 ms** |
+
+Load is one-time and chunked: 2M rows in ~28s end to end (generate, parse,
+join, roll up), so 20M is roughly 5 minutes. Narration parsing runs at ~95k
+rows/sec single-threaded and is the bulk of it.
+
+Nothing here scans a table at answer time that a rollup could serve, and the
+enrichment never holds more than one chunk in memory — the first thing that
+breaks when local row counts become production row counts.
+
 ## Architecture
 
 ```
