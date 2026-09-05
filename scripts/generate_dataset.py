@@ -551,6 +551,7 @@ def augment_chunk(rs, df, enc, end_boundary):
         base = df.iloc[sel].reset_index(drop=True)
         delay = rs.integers(0, 5 * 86400 + 1, n_rev).astype("timedelta64[s]")
         new_dates = base["transaction_date"].to_numpy() + delay
+        new_dates = np.minimum(new_dates, end_boundary)
         ref_txt = base["transaction_reference_id"].fillna("NA").astype(str)
         trunc_desc = base["description"].astype(str).str.slice(0, 60)
         new_desc = "REV/" + ref_txt + "/" + trunc_desc
@@ -574,7 +575,8 @@ def augment_chunk(rs, df, enc, end_boundary):
         dup = df.iloc[sel].reset_index(drop=True).copy()
         shift = rs.integers(30, 181, n_dup).astype("timedelta64[s]")
         dup["transaction_id"] = uuids(rs, n_dup)
-        dup["transaction_date"] = dup["transaction_date"].to_numpy() + shift
+        dup["transaction_date"] = np.minimum(
+            dup["transaction_date"].to_numpy() + shift, end_boundary)
         parts.append(dup)
 
     out = pd.concat(parts, ignore_index=True) if len(parts) > 1 else df
@@ -678,12 +680,17 @@ def main():
     # --- change 8: home counterparty sets + volume skew --------------------
     home_vend_idx, home_vend_size = build_home_sets(rs, a.accounts, len(VENDORS), 8, 15)
     home_ppl_idx, home_ppl_size = build_home_sets(rs, a.accounts, len(PEOPLE), 5, 10)
-    acct_w = account_weights(rs, a.accounts)
+    acct_w, dormant = account_weights(rs, a.accounts)
+    n_dormant = int(dormant.sum())
+    print(f"dormant accounts: {n_dormant}/{a.accounts} ({100*n_dormant/max(a.accounts,1):.1f}%)")
 
     # --- change 3: time distribution -----------------------------------------
     end = pd.Timestamp(a.end)
     start = end - pd.DateOffset(months=a.months)
     days, day_probs, hour_probs = build_time_distribution(start, end)
+    # end-of-day boundary on --end: reversal/duplicate offsets get clamped to
+    # this so they never push transaction_date past the requested window.
+    end_boundary = (end + pd.Timedelta(hours=23, minutes=59, seconds=59)).to_datetime64()
 
     cats_list = [c[0] for c in CATEGORY_MIX]
     kinds_by_cat = {c[0]: c[2] for c in CATEGORY_MIX}
@@ -694,18 +701,24 @@ def main():
     # --- change 2: recurring mandates, built once (bounded by accounts x 40 x
     # months regardless of --rows, so this never approaches chunk-scale memory)
     mandates_per_acct = int(np.clip(round(a.rows * a.recurring_share / (a.accounts * a.months)), 3, 40))
-    mandates = build_mandates(rs, a.accounts, a.months, mandates_per_acct, mu, sig, cat_weight_lookup)
+    mandates = build_mandates(rs, a.accounts, a.months, mandates_per_acct, mu, sig, cat_weight_lookup, dormant)
     rec_rows_total = sum(m["end_m"] - m["start_m"] + 1 for m in mandates)
 
     # --- change 6: self-transfer budget --------------------------------------
-    multi_entities = np.where(sizes_arr >= 2)[0]
-    entity_accounts = {int(e): np.where(account_entity_idx == e)[0] for e in multi_entities}
+    # Dormant accounts (change: genuinely-dormant accounts) are excluded from
+    # both legs -- an entity only counts as "multi" here if it still has >=2
+    # non-dormant accounts to pair up.
+    acc_df = pd.DataFrame({"entity": account_entity_idx, "acc_idx": np.arange(a.accounts)})
+    acc_df = acc_df[~dormant]
+    entity_accounts = {int(e): g.to_numpy() for e, g in acc_df.groupby("entity")["acc_idx"]
+                        if len(g) >= 2}
+    multi_entities = np.array(sorted(entity_accounts.keys()), dtype=np.int64)
     self_target = 0
     entity_probs = None
     if len(multi_entities):
         self_target = int(round(a.rows * 0.03))
         self_target -= self_target % 2
-        entity_probs = sizes_arr[multi_entities].astype(float)
+        entity_probs = np.array([len(entity_accounts[e]) for e in multi_entities], dtype=float)
         entity_probs = entity_probs / entity_probs.sum()
 
     oneoff_target = max(0, a.rows - rec_rows_total - self_target)
@@ -717,7 +730,7 @@ def main():
     state = {"first": True, "writer": None, "written": 0, "rev": 0, "dup": 0}
 
     def emit(df):
-        df, n_rev, n_dup = augment_chunk(rs, df, enc)
+        df, n_rev, n_dup = augment_chunk(rs, df, enc, end_boundary)
         state["rev"] += n_rev; state["dup"] += n_dup
         if a.format == "csv":
             df.to_csv(path, mode="w" if state["first"] else "a", header=state["first"], index=False)
