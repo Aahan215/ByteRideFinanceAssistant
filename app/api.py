@@ -61,11 +61,30 @@ def health():
 
 @app.post("/ask", response_model=Answer)
 def ask(req: Ask):
-    from app.planner import plan
+    from app.planner import plan_with_confidence
+    from app.llm import ModelUnavailable
+
     prior = SESSIONS.get(req.session_id)
-    spec = plan(req.question, prior)
-    SESSIONS[req.session_id] = spec
-    return answer_spec(spec, req.question)
+    try:
+        result = plan_with_confidence(req.question, prior)
+    except ModelUnavailable as e:
+        return Answer(answer=str(e), refused=True, confidence="n/a")
+
+    SESSIONS[req.session_id] = result.spec
+    out = answer_spec(result.spec, req.question)
+    if not out.refused:
+        out.confidence = result.confidence
+        if result.matched_date_text:
+            out.warnings.append(
+                f'Read "{result.matched_date_text}" as {out.window}.')
+    return out
+
+
+@app.get("/efficiency")
+def efficiency():
+    """Which model answered what, and how often we escalated. Worth 20%."""
+    from app.llm import efficiency_report
+    return efficiency_report()
 
 
 @app.post("/ask_spec", response_model=Answer)

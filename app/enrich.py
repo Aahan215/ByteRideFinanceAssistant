@@ -73,6 +73,14 @@ CATEGORIES: list[tuple[str, re.Pattern]] = [
 # Everything with a payment channel but no category signal is a plain transfer.
 TRANSFER_CHANNELS = {"UPI", "IMPS", "NEFT", "RTGS", "FT"}
 
+# Categories where the narration describes an EVENT, not a payee. Without this,
+# the fallback rule happily extracts "MIN BAL PENALTY" and "ATM CASH WDL" as
+# vendors, and "where did I spend the most" ranks them alongside real shops.
+NO_COUNTERPARTY = {"BANK_CHARGES", "TAX", "CASH", "CHEQUE", "INTEREST"}
+
+# "NA" is our own placeholder for a missing reference id leaking into the name.
+TRAILING_PLACEHOLDER = re.compile(r"\s+(NA|NULL|NONE)\s*$", re.I)
+
 
 def categorise(description: str, channel: str | None) -> tuple[str, str]:
     """Returns (category, matched_rule). Never guesses: an unmatched narration
@@ -160,7 +168,14 @@ def parse(description: str | None) -> Parsed:
 
     cat, cat_by = categorise(d, channel)
 
+    # A bank charge has no counterparty. Saying "none" is correct; inventing a
+    # vendor called IMPS CHARGES corrupts every spend-by-vendor answer.
+    if cat in NO_COUNTERPARTY:
+        return Parsed(channel, None, None, f"no-counterparty:{cat}", cat, cat_by)
+
     if raw is None:
         return Parsed(channel, None, None, "unparsed", cat, cat_by)
-    raw = re.sub(r"\s+", " ", raw.strip())
+    raw = TRAILING_PLACEHOLDER.sub("", re.sub(r"\s+", " ", raw.strip()))
+    if not _plausible_name(raw):
+        return Parsed(channel, None, None, "unparsed", cat, cat_by)
     return Parsed(channel, raw, normalise(raw), rule, cat, cat_by)

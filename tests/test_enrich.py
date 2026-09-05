@@ -49,3 +49,23 @@ def test_word_boundaries_stop_false_positives():
 
 def test_unmatched_narration_is_not_forced_into_a_bucket():
     assert parse("SOMETHING ENTIRELY UNKNOWN 12345").category == "UNCATEGORISED"
+
+
+def test_bank_charges_have_no_counterparty():
+    # guards a real bug: the fallback rule ranked "MIN BAL PENALTY" as a vendor
+    for d in ("IMPS charges", "MIN BAL PENALTY", "AMC FEE S123"):
+        p = parse(d)
+        assert p.counterparty is None, d
+        assert p.parsed_by.startswith("no-counterparty")
+
+
+def test_tax_and_cash_have_no_counterparty():
+    assert parse("TDS 194C Q3 FY26").counterparty is None
+    assert parse("ATM CASH WDL S518883172").counterparty is None
+
+
+def test_placeholder_ref_is_stripped_from_the_name():
+    # "NA" is our own stand-in for a missing reference id; it must not become
+    # part of the vendor name and split the group.
+    name = parse("EMI BAJAJ FINANCE LTD NA").counterparty
+    assert name and not name.endswith("NA") and "BAJAJ FINANCE" in name
