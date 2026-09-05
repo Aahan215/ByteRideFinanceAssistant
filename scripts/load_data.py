@@ -45,6 +45,8 @@ def enrich(con) -> dict:
         "counterparty_raw": [p.counterparty_raw for p in parsed],
         "counterparty": [p.counterparty for p in parsed],
         "parsed_by": [p.parsed_by for p in parsed],
+        "category": [p.category for p in parsed],
+        "category_by": [p.category_by for p in parsed],
     })
     con.register("parsed_df", out)
     con.execute("CREATE OR REPLACE TABLE txn_parsed AS SELECT * FROM parsed_df")
@@ -55,16 +57,15 @@ def enrich(con) -> dict:
 
 
 def build_view(con):
-    recon = SEMANTIC["derived"]["reconciliation_state"]["sql"].strip()
-    con.execute(f"""
+    con.execute("""
         CREATE OR REPLACE VIEW txn_enriched AS
         SELECT t.transaction_id, t.account_id, t.transaction_date, t.transaction_type,
                t.description, t.transaction_amount, t.transaction_reference_id,
                t.utr_number,
                p.channel, p.counterparty, p.counterparty_raw, p.parsed_by,
+               p.category, p.category_by,
                a.entity_id, a.account_number, a.program_id, a.available_balance,
-               a.bank_code, b.bank_name,
-               ({recon}) AS reconciliation_state
+               a.bank_code, b.bank_name
         FROM "transaction" t
         LEFT JOIN txn_parsed p USING (transaction_id)
         LEFT JOIN account a  USING (account_id)
@@ -76,7 +77,7 @@ def build_rollups(con):
     con.execute("""
         CREATE OR REPLACE TABLE rollup_counterparty_month AS
         SELECT date_trunc('month', transaction_date) AS month,
-               counterparty, transaction_type, reconciliation_state,
+               counterparty, category, transaction_type,
                SUM(transaction_amount) AS sum_amount, COUNT(*) AS count
         FROM txn_enriched GROUP BY 1,2,3,4
     """)
@@ -100,6 +101,11 @@ def main():
           f"({stats['coverage']:.1%})")
     for rule, n in sorted(stats["by_rule"].items(), key=lambda kv: -kv[1]):
         print(f"  {rule:22} {n:>10,}")
+    cats = con.execute("""SELECT category, COUNT(*) n FROM txn_enriched
+                          GROUP BY 1 ORDER BY n DESC""").fetchall()
+    print("\ncategories:")
+    for c, n in cats:
+        print(f"  {c:16} {n:>10,}")
     print(f"\ndate range: {lo} .. {hi}")
     print(f"ANCHOR DATE (the assistant's 'today'): {hi}")
     print(f"\ndone -> {DB}")

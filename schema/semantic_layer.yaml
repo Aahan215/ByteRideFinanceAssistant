@@ -48,7 +48,7 @@ dimensions:
   account_id:       {column: account_id}
   entity_id:        {column: entity_id}
   program_id:       {column: program_id}
-  reconciliation:   {column: reconciliation_state}
+  category:         {column: category}          # TAX / BANK_CHARGES / TRANSFER / ...
   month:            {expr: "date_trunc('month', {date})"}
   quarter:          {expr: "date_trunc('quarter', {date})"}
 
@@ -77,6 +77,9 @@ reference_columns:
   default: transaction_reference_id
   explicit_utr: utr_number
 
+spend_categories: [TAX, BANK_CHARGES, INTEREST, EMI_LOAN, SALARY, UTILITIES,
+                   INSURANCE, INVESTMENT, CASH, CHEQUE, RENT, TRANSFER, UNCATEGORISED]
+
 synonyms:
   spend:       {dataset: payouts, metric: sum_amount}
   spent:       {dataset: payouts, metric: sum_amount}
@@ -85,6 +88,12 @@ synonyms:
   received:    {dataset: receipts, metric: sum_amount}
   credits:     {dataset: receipts}
   debits:      {dataset: payouts}
+  tax:         {dimension: category, value: TAX}
+  taxes:       {dimension: category, value: TAX}
+  gst:         {dimension: category, value: TAX}
+  tds:         {dimension: category, value: TAX}
+  fees:        {dimension: category, value: BANK_CHARGES}
+  charges:     {dimension: category, value: BANK_CHARGES}
   vendor:      {dimension: counterparty}
   merchant:    {dimension: counterparty}
   supplier:    {dimension: counterparty}

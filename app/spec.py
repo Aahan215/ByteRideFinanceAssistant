@@ -11,8 +11,8 @@ Metric = Literal["sum_amount", "count", "avg_amount", "max_amount", "min_amount"
 # "payouts" = debits, "receipts" = credits. There is no vendor_payouts table.
 Dataset = Literal["transactions", "payouts", "receipts"]
 Dimension = Literal[
-    "counterparty", "channel", "transaction_type", "bank_name", "bank_code",
-    "account_id", "entity_id", "program_id", "reconciliation", "month", "quarter",
+    "counterparty", "category", "channel", "transaction_type", "bank_name",
+    "bank_code", "account_id", "entity_id", "program_id", "month", "quarter",
 ]
 
 
@@ -28,6 +28,7 @@ class DateRange(BaseModel):
 
 class Filters(BaseModel):
     counterparty: Optional[str] = None      # parsed vendor/merchant name
+    category: Optional[str] = None          # TAX / BANK_CHARGES / TRANSFER / ...
     channel: Optional[str] = None           # UPI / IMPS / NEFT / FT / CHEQUE / CHARGES
     transaction_type: Optional[Literal["credit", "debit"]] = None
     bank_name: Optional[str] = None
@@ -35,7 +36,6 @@ class Filters(BaseModel):
     account_id: Optional[str] = None
     entity_id: Optional[str] = None
     program_id: Optional[int] = None
-    reconciliation: Optional[Literal["reconciled", "unreconciled"]] = None
     reference_id: Optional[str] = None      # -> transaction_reference_id (DECISIONS.md #2)
     description_contains: Optional[str] = None
     min_amount: Optional[float] = None

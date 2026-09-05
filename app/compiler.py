@@ -78,8 +78,8 @@ def evidence_columns() -> str:
     """The drill-down projection. Sensitive columns are masked in SQL so raw
     values never reach the API layer, let alone the model or the screen."""
     cols = ["transaction_id", "transaction_date", "transaction_type", "description",
-            "transaction_amount", "counterparty", "channel", "bank_name",
-            "reconciliation_state", "transaction_reference_id"]
+            "transaction_amount", "counterparty", "category", "channel",
+            "bank_name", "transaction_reference_id"]
     masked = []
     for col, rule in SENSITIVE.items():
         if rule["mask"] == "last4":

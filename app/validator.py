@@ -35,7 +35,22 @@ def validate(spec: QuerySpec) -> Verdict:
 
     warnings, repaired = [], spec.model_copy(deep=True)
 
-    for dim in ("counterparty", "channel", "bank_name", "transaction_type", "reconciliation"):
+    # Closed vocabularies vs open ones behave differently, and conflating them
+    # is a real bug: "total tax paid" when the data holds no tax rows should
+    # answer "none", not refuse -- TAX is a valid category that happens to be
+    # empty. A misspelled VENDOR, by contrast, means we misunderstood, so refuse.
+    for dim in ("category", "transaction_type"):
+        value = getattr(spec.filters, dim)
+        if value is None:
+            continue
+        allowed = SEMANTIC.get("spend_categories") if dim == "category" else ["credit", "debit"]
+        if str(value).upper() not in [str(a).upper() for a in allowed]:
+            near = get_close_matches(str(value).upper(), [str(a) for a in allowed], n=3, cutoff=0.6)
+            return Verdict(False, refusal=f"'{value}' is not a {dim} I track."
+                           + (f" Did you mean {', '.join(near)}?" if near else ""))
+        setattr(repaired.filters, dim, str(value).upper() if dim == "category" else value)
+
+    for dim in ("counterparty", "channel", "bank_name"):
         value = getattr(spec.filters, dim)
         if value is None:
             continue

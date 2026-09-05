@@ -40,3 +40,6 @@ model-lock:
 
 enrich-report:
 	./.venv/bin/python scripts/load_data.py
+
+crypto-probe:
+	./.venv/bin/python scripts/crypto_probe.py

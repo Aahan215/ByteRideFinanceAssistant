@@ -31,3 +31,21 @@ def test_legal_suffixes_collapse_to_one_group_key():
 def test_empty_description_is_not_invented():
     p = parse(None)
     assert p.counterparty is None and p.parsed_by == "empty"
+
+
+def test_tax_beats_transfer_channel():
+    assert parse("NEFT/000483399203/ICIC/GST PAYMENT CHALLAN").category == "TAX"
+    assert parse("TDS RECOVERY Q2 FY26").category == "TAX"
+
+
+def test_charges_are_not_transfers():
+    assert parse("IMPS charges").category == "BANK_CHARGES"
+
+
+def test_word_boundaries_stop_false_positives():
+    # a merchant called TAXI FOR SURE must not be classified as TAX
+    assert parse("UPI-TAXI FOR SURE-XXXXXX8672-AUBL0002125-1032937").category != "TAX"
+
+
+def test_unmatched_narration_is_not_forced_into_a_bucket():
+    assert parse("SOMETHING ENTIRELY UNKNOWN 12345").category == "UNCATEGORISED"

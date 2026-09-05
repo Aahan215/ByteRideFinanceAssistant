@@ -45,12 +45,55 @@ LEGAL_SUFFIX = re.compile(
     r"\s+(PRIVATE\s+LIMITED|PVT\.?\s*LTD\.?|LIMITED|LTD\.?|LLP|INC\.?)\s*$", re.I)
 
 
+# --- spend categories --------------------------------------------------------
+# There is no category column. "Where did I spend the most?" and "total tax I
+# paid" both need one, so it is derived here at load time from the narration.
+#
+# Order matters: TAX and CHARGES must win over TRANSFER, because a tax payment
+# is also an NEFT. Word boundaries everywhere -- a vendor called TAXI must not
+# match TAX.
+CATEGORIES: list[tuple[str, re.Pattern]] = [
+    ("TAX",         re.compile(r"\b(C?GST|SGST|IGST|TDS|TCS|INCOME\s*TAX|ADV(ANCE)?\s*TAX|"
+                              r"SELF\s*ASSESS\w*|TAX\s*PAY\w*|CHALLAN|\bTAX\b)", re.I)),
+    ("BANK_CHARGES", re.compile(r"\b(CHARGE?S?|CHRG|CHGS|FEE|COMMISSION|COMM|PENALTY|"
+                              r"AMC|MIN\s*BAL|SMS\s*CHG)\b", re.I)),
+    ("INTEREST",    re.compile(r"\b(INTEREST|INT\.?\s*(PAID|CR|DR))\b", re.I)),
+    ("EMI_LOAN",    re.compile(r"\b(EMI|LOAN|REPAY\w*|DISBURS\w*|BAJAJ\s*FIN\w*)\b", re.I)),
+    ("SALARY",      re.compile(r"\b(SALARY|SAL\s*CR|PAYROLL|STIPEND)\b", re.I)),
+    ("UTILITIES",   re.compile(r"\b(ELECTRICITY|BSES|MSEB|BESCOM|GAS|WATER|BROADBAND|"
+                              r"RECHARGE|AIRTEL|JIO|VODAFONE|BSNL|DTH)\b", re.I)),
+    ("INSURANCE",   re.compile(r"\b(INSURANCE|PREMIUM|POLICY|\bLIC\b)\b", re.I)),
+    ("INVESTMENT",  re.compile(r"\b(MUTUAL\s*FUND|\bSIP\b|ZERODHA|GROWW|UPSTOX|DEMAT|"
+                              r"\bNSE\b|\bBSE\b)\b", re.I)),
+    ("CASH",        re.compile(r"\b(ATM|CASH\s*(WDL|WITHDRAWAL|DEP)|\bCW\b)\b", re.I)),
+    ("CHEQUE",      re.compile(r"\b(CHEQUE|CHQ)\b", re.I)),
+    ("RENT",        re.compile(r"\bRENT\b", re.I)),
+]
+
+# Everything with a payment channel but no category signal is a plain transfer.
+TRANSFER_CHANNELS = {"UPI", "IMPS", "NEFT", "RTGS", "FT"}
+
+
+def categorise(description: str, channel: str | None) -> tuple[str, str]:
+    """Returns (category, matched_rule). Never guesses: an unmatched narration
+    becomes UNCATEGORISED so the assistant can say so instead of hiding it in
+    a bucket."""
+    for name, rx in CATEGORIES:
+        if rx.search(description):
+            return name, f"keyword:{name}"
+    if channel in TRANSFER_CHANNELS:
+        return "TRANSFER", "channel-default"
+    return "UNCATEGORISED", "none"
+
+
 @dataclass
 class Parsed:
     channel: str | None
     counterparty_raw: str | None
     counterparty: str | None   # normalised key for grouping
     parsed_by: str             # which rule fired -- keep for coverage reporting
+    category: str = "UNCATEGORISED"
+    category_by: str = "none"
 
 
 def _plausible_name(tok: str) -> bool:
@@ -115,7 +158,9 @@ def parse(description: str | None) -> Parsed:
         raw = _best_token(re.split(r"[/\-|]", d))
         rule = "longest-alpha-run" if raw else "unparsed"
 
+    cat, cat_by = categorise(d, channel)
+
     if raw is None:
-        return Parsed(channel, None, None, "unparsed")
+        return Parsed(channel, None, None, "unparsed", cat, cat_by)
     raw = re.sub(r"\s+", " ", raw.strip())
-    return Parsed(channel, raw, normalise(raw), rule)
+    return Parsed(channel, raw, normalise(raw), rule, cat, cat_by)
