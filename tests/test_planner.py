@@ -212,3 +212,29 @@ def test_refinement_leaves_untouched_fields_alone():
                                    ("dataset", "metric", "group_by", "category", "counterparty")})
     assert out.dataset == "payouts" and out.group_by == ["counterparty"]
     assert out.filters.category == "TAX"
+
+
+def test_out_of_scope_concepts_are_refused_without_a_model_call():
+    """Every term here is genuinely absent from bank/account/transaction, so a
+    match is a real refusal rather than a guess."""
+    from app.planner import out_of_scope
+    for q in ["Which transactions are still unreconciled?", "Am I over budget?",
+              "What will I spend next month?", "What is my credit score?",
+              "What is my net worth?", "Show me my profit and loss",
+              "Show me all invoices from Acme", "How much tax do I owe?"]:
+        assert out_of_scope(q), q
+    for q in ["Where did I spend the most this month?", "Total tax I paid last quarter",
+              "How much did I pay Zomato?", "Break spending down by category"]:
+        assert out_of_scope(q) is None, q
+
+
+def test_a_category_the_user_never_named_is_not_trusted():
+    """Constrained decoding forces a choice from the enum, so "groceries"
+    landed on CASH and returned a confident Rs 42 crore."""
+    from app.planner import category_is_supported
+    assert not category_is_supported("How much did I spend on groceries?", "CASH")
+    assert not category_is_supported("what did I spend on travel?", "UTILITIES")
+    assert category_is_supported("how much cash did I withdraw?", "CASH")
+    assert category_is_supported("total tax paid", "TAX")
+    assert category_is_supported("my electricity bills", "UTILITIES")
+    assert category_is_supported("anything", None)

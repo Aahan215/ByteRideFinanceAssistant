@@ -141,6 +141,15 @@ def validate(spec: QuerySpec) -> Verdict:
         elif how != "exact":
             warnings.append(f"Interpreted vendor '{value}' as '{resolved}'.")
 
+    # A reference number is an alphanumeric code. The model put the word
+    # "unreconciled" here, the lookup matched nothing, and "Count: 0" read as
+    # "you have zero unreconciled transactions" -- a confident wrong answer.
+    ref = spec.filters.reference_id
+    if ref is not None and not any(ch.isdigit() for ch in str(ref)):
+        return Verdict(False, refusal=(
+            f"'{ref}' does not look like a transaction reference. Reference "
+            f"numbers are codes such as S69244711 or HDFCH01078329532."))
+
     for dim in ("channel", "bank_name"):
         value = getattr(spec.filters, dim)
         if value is None:

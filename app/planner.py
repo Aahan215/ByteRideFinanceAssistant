@@ -78,7 +78,10 @@ def planner_schema() -> dict:
                 "type": "object",
                 "properties": {
                     "counterparty": {"type": "string"},
-                    "category": {"type": "string", "enum": CATEGORIES},
+                    # NOT_IN_DATA is the escape hatch. Without a way to say
+                    # "the category asked for is not one of these", constrained
+                    # decoding forces the model to pick the nearest wrong one.
+                    "category": {"type": "string", "enum": CATEGORIES + ["NOT_IN_DATA"]},
                     "channel": {"type": "string"},
                     "transaction_type": {"type": "string", "enum": ["credit", "debit"]},
                     "bank_name": {"type": "string"},
@@ -196,6 +199,67 @@ def apply_refinement(prior: QuerySpec, r: dict) -> QuerySpec:
         from app.enrich import normalise
         spec.filters.counterparty = normalise(str(v)) or None
     return spec
+
+
+# Concepts this schema genuinely cannot express. Deliberately HIGH PRECISION --
+# every term here is absent from bank/account/transaction, so a match is a real
+# refusal, not a guess. A constrained decoder will otherwise map an unknown
+# concept to the NEAREST allowed value: "groceries" became category CASH and
+# returned Rs 42 crore, "unreconciled" became a reference_id and returned 0.
+OUT_OF_SCOPE = (
+    # no leading \b: "unreconciled" has no boundary before "reconcil"
+    (re.compile(r"\w*reconcil\w*", re.I),
+     "This dataset has no reconciliation status -- there is no field recording "
+     "whether a transaction was matched to an external record."),
+    (re.compile(r"\bbudget(s|ed|ing)?\b", re.I),
+     "I have no budgets. I can only report what was actually spent."),
+    (re.compile(r"\b(forecast|predict|projection|will i spend|next (month|quarter|year))\b", re.I),
+     "I can only report transactions that have already happened; I do not forecast."),
+    (re.compile(r"\bcredit score\b", re.I), "I have no credit score information."),
+    (re.compile(r"\bnet worth\b", re.I),
+     "I have transaction and balance data, not assets and liabilities."),
+    (re.compile(r"\b(profit|p\s*&\s*l|p and l|balance sheet|income statement)\b", re.I),
+     "I have no accounting statements -- only bank transactions."),
+    (re.compile(r"\binvoices?\b", re.I),
+     "I have bank transactions, not invoices."),
+    (re.compile(r"\btax\b.{0,15}\bowe|\bowe\b.{0,15}\btax\b|"
+                r"\btax (owed|due|liability|return|refund)\b", re.I),
+     "I can show tax payments that were made, but I have nothing about tax owed."),
+)
+
+
+# A category filter is only trustworthy if the user actually named that
+# category. Constrained decoding forces a choice from the enum, so an unknown
+# concept lands on the nearest value -- "groceries" became CASH and returned
+# Rs 42 crore. Requiring a cue word turns an invented mapping into a refusal.
+CATEGORY_CUES = {
+    "TAX": r"tax|gst|tds|tcs|challan|cess|duty",
+    "BANK_CHARGES": r"charge|fee|commission|penalty|amc|levy",
+    "INTEREST": r"interest",
+    "EMI_LOAN": r"emi|loan|instal?ment|repay|borrow|mortgage",
+    "SALARY": r"salary|payroll|wage|stipend|income",
+    "UTILITIES": r"utilit|electric|power|gas|water|broadband|internet|recharge|mobile|phone|bill",
+    "INSURANCE": r"insur|premium|policy|\blic\b",
+    "INVESTMENT": r"invest|mutual fund|\bsip\b|stock|share|equity|demat|broker",
+    "CASH": r"\bcash\b|\batm\b|withdraw",
+    "CHEQUE": r"cheque|check\b",
+    "RENT": r"\brent\b|lease",
+    "TRANSFER": r"transfer|\bupi\b|\bimps\b|\bneft\b|\brtgs\b",
+}
+CATEGORY_CUE_RE = {k: re.compile(v, re.I) for k, v in CATEGORY_CUES.items()}
+
+
+def category_is_supported(question: str, category: str | None) -> bool:
+    if not category or category not in CATEGORY_CUE_RE:
+        return True
+    return bool(CATEGORY_CUE_RE[category].search(question))
+
+
+def out_of_scope(question: str) -> str | None:
+    for rx, reason in OUT_OF_SCOPE:
+        if rx.search(question):
+            return reason
+    return None
 
 
 # The model answers "unchanged" for everything when it is unsure, which is safe
@@ -537,6 +601,11 @@ def _call(chat_fn: ChatFn | None, system: str, user: str, temperature: float | N
 def plan_detailed(question: str, prior: QuerySpec | None = None, *,
                   chat_fn: ChatFn | None = None,
                   temperature: float | None = None) -> PlanResult:
+    # Refuse before spending a model call on something the schema cannot answer.
+    if (reason := out_of_scope(question)) and prior is None:
+        return PlanResult(QuerySpec(dataset="transactions", unsupported_reason=reason),
+                          confidence="high", attempts=[])
+
     dr, matched = extract_dates(question)
     attempts: list[str] = []
     used_patch = False
@@ -589,6 +658,26 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
                               unsupported_reason="I could not turn that into a query I trust. "
                                                  "Could you rephrase it?"),
                     confidence="low", attempts=attempts)
+
+    # Only check a category this turn actually introduced. A follow-up inherits
+    # the prior filter and will not re-mention it -- "what about the month
+    # before?" says nothing about tax, but tax is still the right filter.
+    inherited = (used_patch and prior is not None
+                 and spec.filters.category == prior.filters.category)
+    if (spec.filters.category and not inherited
+            and not category_is_supported(question, spec.filters.category)):
+        return PlanResult(
+            QuerySpec(dataset=spec.dataset, unsupported_reason=(
+                "I do not derive that category from your transactions. I can "
+                f"break spending down by: {', '.join(c.lower().replace('_', ' ') for c in CATEGORIES)}.")),
+            confidence="high", attempts=attempts)
+
+    if spec.filters.category == "NOT_IN_DATA":
+        return PlanResult(
+            QuerySpec(dataset=spec.dataset, unsupported_reason=(
+                "I do not derive that category from your transactions. I can "
+                f"break spending down by: {', '.join(CATEGORIES)}.")),
+            confidence="high", attempts=attempts)
 
     if dr is not None:
         spec = spec.model_copy(update={"date_range": dr})
