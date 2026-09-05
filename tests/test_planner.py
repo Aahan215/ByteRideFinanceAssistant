@@ -449,3 +449,19 @@ def test_price_questions_we_CAN_answer_are_not_blocked():
     for q in ["what was my largest payment?", "how much did I pay Zomato?",
               "what did I spend the most on?", "cheapest month for groceries"]:
         assert out_of_scope(q) is None, q
+
+
+
+def test_bare_transactions_means_all_of_them_on_a_first_turn():
+    """The 1.7B read "how many transactions in each category" as payouts. The
+    word is an explicit dataset cue; the model should not be deciding it."""
+    from app.planner import dataset_from_words
+    assert dataset_from_words("How many transactions in each category?") == "transactions"
+    assert dataset_from_words("list all my txns last month") == "transactions"
+    # direction words still win over a bare "transactions"
+    assert dataset_from_words("how much did I spend on payment transactions") == "payouts"
+    assert dataset_from_words("income transactions last quarter") == "receipts"
+    r = plan_detailed("How many transactions in each category?",
+                      chat_fn=lambda *a, **k: {"dataset": "payouts", "metric": "count",
+                                               "group_by": ["category"]})
+    assert r.spec.dataset == "transactions"

@@ -52,6 +52,25 @@ def escalate_threshold() -> float:
     except ValueError:
         return 0.6
 
+
+def confidence_samples(default: int) -> int:
+    """How many times plan_with_confidence samples the planner.
+
+    Normally config/models.yaml's confidence.samples, committed so everyone's
+    numbers match. FINANCE_CONFIDENCE_SAMPLES overrides it for one process --
+    the eval harness's `--samples N` flag uses this to run the golden set at a
+    different sample count without touching the committed config (and without
+    a global mutable setter, which `make eval` and pytest could step on when
+    run concurrently).
+    """
+    override = os.getenv("FINANCE_CONFIDENCE_SAMPLES")
+    if override is None:
+        return default
+    try:
+        return max(1, int(override))
+    except ValueError:
+        return default
+
 # --- vocabulary, derived from the semantic layer so it cannot drift ----------
 DATASETS = list(SEMANTIC["datasets"])
 METRICS = list(SEMANTIC["metrics"])
@@ -377,8 +396,12 @@ DATASET_CUES = (
     ("payouts", re.compile(r"\b(payouts?|spend(ing)?|spent|paid|pay|debits?|"
                            r"went out|going out|outflow|expenses?)\b", re.I)),
     ("transactions", re.compile(r"\b(all transactions|everything|both|"
-                                r"all of them|overall)\b", re.I)),
+                                r"all of them|overall|transactions?|txns?)\b", re.I)),
 )
+# Order matters above: "spend"/"received" are checked FIRST, so "payment
+# transactions" is still payouts. A bare "transactions" with no direction word
+# means all of them -- the 1.7B read "how many transactions in each category"
+# as payouts, and that is not a judgement a model should be making.
 
 
 # "Trend" is a question about time, and it is regular enough in English to
@@ -945,6 +968,12 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
         unit = "quarter" if re.search(r"\bquarterly|by quarter\b", question, re.I) else "month"
         spec = spec.model_copy(update={"group_by": [unit]})
 
+    # Dataset direction from the user's own words, on FIRST turns too. Was only
+    # applied to follow-ups. Direction words are regular enough to decide
+    # without the model, and the model got it wrong on the 1.7B.
+    if not used_patch and (ds := dataset_from_words(question)) and ds != spec.dataset:
+        spec = spec.model_copy(update={"dataset": ds})
+
     if dr is not None:
         spec = spec.model_copy(update={"date_range": dr})
 
@@ -1027,7 +1056,7 @@ def plan_with_confidence(question: str, prior: QuerySpec | None = None, *,
     agrees with itself. Cheap on a small model, and it is the honest basis for
     the confidence badge -- not a number the model claims about itself."""
     conf_cfg = CFG.get("confidence", {"samples": 3, "temperature": 0.7})
-    n, temp = conf_cfg["samples"], conf_cfg["temperature"]
+    n, temp = confidence_samples(conf_cfg["samples"]), conf_cfg["temperature"]
 
     first = plan_detailed(question, prior, chat_fn=chat_fn, temperature=0.0)
     if first.spec.unsupported_reason:

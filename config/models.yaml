@@ -62,7 +62,10 @@ roles:
                              # on different hosts.
   planner:
     base: gemini-3.5-flash-lite   # pinned, not -latest: an alias shifts
-    ollama_base: qwen3:4b         # under you and eval numbers stop matching
+    ollama_base: qwen3:1.7b       # under you and eval numbers stop matching.
+                                  # 1.7b: golden 54/55 (55/55 after the
+                                  # dataset-cue fix), red-team 46/46 with 0
+                                  # escalations, p50 458ms vs 1517ms for 4b.
     derived: fin-planner:v1
     temperature: 0
     top_p: 1.0

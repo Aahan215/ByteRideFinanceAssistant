@@ -17,8 +17,15 @@ checks an interpretation, never arithmetic.
                                                     #   model, not the pipeline
     python evals/run_evals.py --model qwen3:4b --escalate-model qwen3:8b
                                                     # explicit tiered comparison
+    python evals/run_evals.py --samples 3           # override confidence.samples
+                                                    #   for this run only
     python evals/run_evals.py --stub               # no model at all
     python evals/run_evals.py --out report.md      # markdown for the deck
+
+Every non-stub case is planned through `app.planner.plan_with_confidence` --
+the SAME function `/ask` calls -- so this harness actually exercises
+self-consistency sampling and confidence-ratio escalation, not just the raw
+per-model planner (`plan_detailed`, which skips both).
 """
 from __future__ import annotations
 import argparse, collections, os, pathlib, sys, time
@@ -66,14 +73,18 @@ def run_case(case, planner, priors: dict):
     latency = time.perf_counter() - t0
     spec = result if isinstance(result, QuerySpec) else result.spec
     # --stub returns a bare QuerySpec (no model attribution at all), and
-    # plan_detailed itself reports model_used=None for a refusal decided
-    # before any model call (out-of-scope, a contentless question). Both are
-    # genuinely "no model was consulted" -- label them the same, rather than
-    # calling a real planner's deterministic refusal "stub", which it is not.
+    # plan_with_confidence/plan_detailed report model_used=None for a refusal
+    # decided before any model call (out-of-scope, a contentless question).
+    # Both are genuinely "no model was consulted" -- label them the same,
+    # rather than calling a real planner's deterministic refusal "stub",
+    # which it is not.
     model_used = getattr(result, "model_used", None) or "none (no model call)"
     escalated = bool(getattr(result, "escalated", False))
+    # --stub has no confidence signal at all (no self-consistency sampling);
+    # "n/a" is honest, not a fourth confidence LEVEL.
+    confidence = getattr(result, "confidence", "n/a") or "n/a"
     priors[case["id"]] = spec
-    return spec, latency, model_used, escalated
+    return spec, latency, model_used, escalated, confidence
 
 
 def main():
@@ -87,6 +98,9 @@ def main():
                                              "with --model to run an explicit tiered "
                                              "comparison instead of a single-model one")
     ap.add_argument("--stub", action="store_true", help="keyword planner, no model")
+    ap.add_argument("--samples", type=int, help="override confidence.samples "
+                                                "(config/models.yaml) for this run, "
+                                                "via FINANCE_CONFIDENCE_SAMPLES")
     ap.add_argument("--freeze", action="store_true",
                     help="recompute expected values from the verified specs")
     ap.add_argument("--out", help="write a markdown report here")
@@ -100,9 +114,13 @@ def main():
         from app.stub_planner import plan as planner
         label = "stub (keyword rules)"
         escalation_note = "n/a"
+        samples_note = "n/a"
     else:
-        from app.planner import plan_detailed
-        from app.llm import set_model, MODELS
+        # The SAME function /ask calls -- plan_detailed alone never samples
+        # and never triggers the confidence-ratio escalation trigger, so an
+        # eval built on it could not exercise either one (see module docstring).
+        from app.planner import plan_with_confidence, confidence_samples
+        from app.llm import set_model, MODELS, CFG
         if a.model:
             set_model("planner", a.model)
             if not a.escalate_model:
@@ -114,23 +132,28 @@ def main():
             # An explicit tiered comparison always wants escalation on, even if
             # the shell has FINANCE_ESCALATE=0 set from a prior single-model run.
             os.environ["FINANCE_ESCALATE"] = "1"
-        planner, label = plan_detailed, MODELS["planner"]
+        if a.samples is not None:
+            os.environ["FINANCE_CONFIDENCE_SAMPLES"] = str(a.samples)
+        planner, label = plan_with_confidence, MODELS["planner"]
         escalation_note = ("disabled (--model without --escalate-model)"
                            if os.getenv("FINANCE_ESCALATE") == "0"
                            else f"on -> {MODELS['escalate']}")
+        samples_note = confidence_samples(CFG.get("confidence", {}).get("samples", 1))
 
-    print(f"planner: {label}   escalate: {escalation_note}   cases: {len(cases)}\n")
+    print(f"planner: {label}   escalate: {escalation_note}   "
+          f"confidence samples: {samples_note}   cases: {len(cases)}\n")
 
     stats = collections.defaultdict(lambda: [0, 0])   # bucket -> [hits, total]
     failures, latencies, priors = [], [], {}
     # model attribution: model name -> [answered, correct]; escalated vs not -> [answered, correct]
     model_usage = collections.defaultdict(lambda: [0, 0])
     by_escalation = {True: [0, 0], False: [0, 0]}
+    confidence_counts = collections.Counter()
 
     for case in cases:
         cid, tags = case["id"], case.get("tags", ["untagged"])
         try:
-            spec, ms, model_used, escalated = run_case(case, planner, priors)
+            spec, ms, model_used, escalated, conf_label = run_case(case, planner, priors)
             latencies.append(ms)
         except Exception as e:
             failures.append((cid, f"planner error: {type(e).__name__}: {e}"))
@@ -206,6 +229,7 @@ def main():
         model_usage[model_used][0] += ok
         by_escalation[escalated][1] += 1
         by_escalation[escalated][0] += ok
+        confidence_counts[conf_label] += 1
 
     if a.freeze:
         freeze(cases)
@@ -238,6 +262,15 @@ def main():
             lines.append(f"accuracy — escalated: {100*esc_hit/esc_tot:.0f}% "
                          f"({esc_tot} cases), not escalated: "
                          f"{100*plain_hit/plain_tot:.0f}% ({plain_tot} cases)")
+
+    conf_total = sum(confidence_counts.values())
+    if conf_total:
+        lines += ["", "### Confidence distribution", "",
+                 "| confidence | cases | share |", "|---|---:|---:|"]
+        for level in ("high", "medium", "low", "n/a"):
+            c = confidence_counts.get(level, 0)
+            if c:
+                lines.append(f"| {level} | {c} | {100*c/conf_total:.0f}% |")
 
     report = "\n".join(lines)
     print(report)

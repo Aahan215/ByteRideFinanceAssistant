@@ -330,6 +330,33 @@
       kind: relative
       unit: month
       offset: -1
+- id: flt_payments_over_lakh_may
+  tags:
+  - filter
+  - dates
+  question: How many payments over 1 lakh did I make in May?
+  expect_spec:
+    metric: count
+    filters:
+      min_amount: 100000
+    date_range:
+      kind: absolute
+      start: '2026-05-01'
+      end: '2026-05-31'
+- id: flt_spend_over_50k_last_month
+  tags:
+  - filter
+  - dates
+  question: Total spend over 50k last month
+  expect_spec:
+    dataset: payouts
+    metric: sum_amount
+    filters:
+      min_amount: 50000
+    date_range:
+      kind: relative
+      unit: month
+      offset: -1
 - id: dt_absolute_range
   tags:
   - dates
