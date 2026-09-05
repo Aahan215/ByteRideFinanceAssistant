@@ -9,7 +9,7 @@ channel out of each narration ONCE, so the assistant never does text parsing
 at answer time.
 """
 from __future__ import annotations
-import pathlib, sys, time
+import pathlib, string, sys, time
 import duckdb, pandas as pd, yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -93,43 +93,58 @@ def enrich(con, chunk: int = CHUNK) -> dict:
             "coverage": round(hits / done, 4) if done else 0.0, "by_rule": by_rule}
 
 
-def mask_sensitive(con) -> str:
-    """Replace account_number with a TRUTHFUL last-4 mask, once, at load time.
+B64_ALPHABET = set(string.ascii_letters + string.digits + "+/=")
 
-    Masking ciphertext gives "XXXXXXN5an" -- the last four base64 characters,
-    which look like a masked account number and mean nothing. Worse than
-    showing nothing, because it invites the reader to trust it.
 
-    There are only a few hundred accounts, so decrypting them here costs
-    milliseconds. The full number is then DISCARDED: the analytical store never
-    holds a plaintext account number, and what reaches the screen is real.
+def looks_encrypted(value: str) -> bool:
+    """Structural: a plaintext account number is digits; ciphertext is base64."""
+    if not value or value.isdigit():
+        return False
+    return not (set(value) - B64_ALPHABET) and len(value) >= 20
+
+
+def mask_account_numbers(con) -> str:
+    """Store account_number ALREADY MASKED, so the full number never lands in
+    the analytical store at all.
+
+    Masking at query time cannot work once the column is encrypted: the last
+    four characters of a base64 ciphertext are not the last four digits of the
+    account. Decrypt here, keep only the last four, discard the rest -- there is
+    no later step that needs more than that.
     """
-    rows = con.execute("SELECT account_id, account_number FROM account").fetchall()
-    if not rows:
+    sample = con.execute("SELECT account_number FROM account "
+                         "WHERE account_number IS NOT NULL LIMIT 1").fetchone()
+    if not sample:
         return "no accounts"
 
-    from app.crypto import decrypt, CryptoNotConfigured
-    sample = str(rows[0][1] or "")
-    looks_encrypted = len(sample) > 24 and not sample.isdigit()
-
-    masked = []
+    plain = [str(r[0]) for r in con.execute(
+        "SELECT account_number FROM account WHERE account_number IS NOT NULL").fetchall()]
     mode = "plaintext"
-    for acct, num in rows:
-        raw = str(num) if num is not None else ""
-        if looks_encrypted:
-            try:
-                raw = decrypt(raw) or ""
-                mode = "decrypted at load"
-            except (CryptoNotConfigured, Exception):
-                masked.append((acct, "[encrypted]"))
-                mode = "no key -- fully redacted"
-                continue
-        masked.append((acct, f"XXXXXX{raw[-4:]}" if len(raw) >= 4 else "XXXXXX"))
+    if looks_encrypted(str(sample[0])):
+        # No blanket except here. A failed decrypt would silently mask the
+        # CIPHERTEXT instead, producing "XXXXXX" plus four base64 characters
+        # that look like an account number and are not.
+        from app.crypto import decrypt, CryptoNotConfigured
+        try:
+            plain = [decrypt(v) or "" for v in plain]
+            mode = "decrypted"
+        except CryptoNotConfigured:
+            # No key: store a full redaction. Never a mask built from
+            # ciphertext -- "XXXXXX" plus four base64 characters looks like an
+            # account number and means nothing, which is worse than showing
+            # nothing because it invites the reader to trust it.
+            con.execute("UPDATE account SET account_number = '[encrypted]'")
+            return "no key -- fully redacted"
 
-    df = pd.DataFrame(masked, columns=["account_id", "account_number_masked"])
-    con.register("mask_df", df)
-    con.execute("CREATE OR REPLACE TABLE account_masked AS SELECT * FROM mask_df")
-    con.unregister("mask_df")
+    ids = [r[0] for r in con.execute(
+        "SELECT account_id FROM account WHERE account_number IS NOT NULL").fetchall()]
+    masked = pd.DataFrame({"account_id": ids,
+                           "masked": ["XXXXXX" + str(v)[-4:] for v in plain]})
+    con.register("masked_df", masked)
+    con.execute("""UPDATE account SET account_number = (
+                     SELECT masked FROM masked_df m WHERE m.account_id = account.account_id)
+                   WHERE account_id IN (SELECT account_id FROM masked_df)""")
+    con.unregister("masked_df")
     return mode
 
 
@@ -164,14 +179,13 @@ def build_view(con, with_anomalies: bool = False):
                t.utr_number,
                p.channel, p.counterparty, p.counterparty_raw, p.parsed_by,
                p.category, p.category_by,
-               acc.entity_id, m.account_number_masked, acc.program_id, acc.available_balance,
+               acc.entity_id, acc.account_number, acc.program_id, acc.available_balance,
                acc.bank_code, b.bank_name
                {anomaly_cols}
         FROM "transaction" t
         LEFT JOIN txn_parsed p USING (transaction_id)
         LEFT JOIN account acc USING (account_id)
         LEFT JOIN bank    b   ON b.bank_code = acc.bank_code
-        LEFT JOIN account_masked m USING (account_id)
         {anomaly_join}
     """)
 
@@ -221,12 +235,11 @@ def main():
         n = con.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
         print(f"  {t:12} {n:>12,} rows")
 
+    mask_mode = mask_account_numbers(con)
     stats = enrich(con)
     n_canon = canonicalise(con)
-    mask_sensitive(con)
     build_view(con)
     build_rollups(con)
-    mask_mode = mask_sensitive(con)
     nstats, nflags = build_stats(con)
     build_view(con, with_anomalies=True)      # re-declare the view to expose them
 
