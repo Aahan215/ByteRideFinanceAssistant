@@ -69,3 +69,20 @@ def test_placeholder_ref_is_stripped_from_the_name():
     # part of the vendor name and split the group.
     name = parse("EMI BAJAJ FINANCE LTD NA").counterparty
     assert name and not name.endswith("NA") and "BAJAJ FINANCE" in name
+
+
+def test_channel_is_a_payment_rail_not_a_category():
+    # a GST payment is a TAX category; it is not sent over a "CHARGES" rail
+    p = parse("GST PAYMENT CHALLAN S983495274")
+    assert p.category == "TAX"
+    assert p.channel in (None, "NEFT", "IMPS", "UPI", "RTGS", "FT", "CHEQUE")
+
+
+def test_trailing_reference_number_does_not_split_a_vendor():
+    a = parse("EMI BAJAJ FINANCE LTD S32337295").counterparty
+    b = parse("EMI BAJAJ FINANCE LTD S99881122").counterparty
+    assert a == b, f"{a!r} != {b!r} -- one lender would split into many groups"
+
+
+def test_a_name_ending_in_a_small_number_survives():
+    assert "2" in (parse("NEFT/1/ICIC/SHOP 42 TRADERS").counterparty or "")

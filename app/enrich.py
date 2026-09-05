@@ -24,8 +24,10 @@ CHANNELS: list[tuple[str, re.Pattern]] = [
     ("FT",    re.compile(r"^\s*FT\s*-", re.I)),
     ("ACH",   re.compile(r"^\s*(ACH|NACH)[\s/-]", re.I)),
     ("CHEQUE", re.compile(r"CHEQUE|\bCHQ\b", re.I)),
-    ("CHARGES", re.compile(r"\bCHARGES?\b|\bFEE\b|\bGST\b", re.I)),
 ]
+# NOTE: `channel` is the payment RAIL only. "CHARGES" and "GST" used to live
+# here, which tagged every GST payment with channel=CHARGES -- a category
+# masquerading as a rail. Fee-vs-transfer is what `category` is for.
 
 # Tokens that are never a counterparty name.
 IFSC = re.compile(r"^[A-Z]{4}0[A-Z0-9]{6}$")
@@ -41,6 +43,11 @@ NOISE = {"INET", "INWD", "P2A", "P2P", "OW", "IW", "CR", "DR", "NA", "MOB", "TPF
 # data -- build a place list from the actual corpus rather than guessing from
 # ten sample rows, or the same vendor splits across several group keys.
 SUFFIX_NOISE = re.compile(r"\s+(DPF\d+|INWD\d+|IN\d{6,})\s*$", re.I)
+
+# A trailing reference/receipt number ("... LTD S32337295"). Left in, one lender
+# becomes thousands of one-transaction "vendors" and every ranking is wrong.
+# Requires >=5 digits so a real name ending in a small number survives.
+TRAILING_REF = re.compile(r"\s+[A-Z]{0,3}\d{5,}\s*$", re.I)
 LEGAL_SUFFIX = re.compile(
     r"\s+(PRIVATE\s+LIMITED|PVT\.?\s*LTD\.?|LIMITED|LTD\.?|LLP|INC\.?)\s*$", re.I)
 
@@ -126,6 +133,7 @@ def normalise(name: str) -> str:
     """Group key. 'SELECTRICITY TWO PRIVATE LIMITED' and 'Selectricity Two Ltd'
     must collapse to the same vendor or every aggregate is wrong."""
     n = SUFFIX_NOISE.sub("", name)
+    n = TRAILING_REF.sub("", n)
     n = LEGAL_SUFFIX.sub("", n)
     n = re.sub(r"[^A-Za-z0-9 ]+", " ", n)
     n = re.sub(r"\s+", " ", n).strip().upper()

@@ -42,10 +42,10 @@ Copy into GitHub Issues so blockers are visible.
 
 | # | Ticket | Size | Notes |
 |---|---|---|---|
-| E1 | Implement `compare_to` in the API (run twice, diff) | M | Field exists in the spec; API ignores it |
+| E1 | ~~`compare_to`~~ | — | **done**, incl. unequal-period guard |
 | E2 | Entity scope enforced on every query | S | "my spends" needs an owner |
 | E3 | Route to `rollup_counterparty_month` when the grain allows | M | Demo latency |
-| E4 | CSV / Excel export endpoint | S | Free "good to have" points |
+| E4 | ~~CSV / Excel export~~ | — | **done** — `POST /export` |
 | E5 | Anomaly z-score flags | M | Bonus |
 | E6 | Tests for every date unit × offset × periods | M | Month-boundary off-by-one is the likeliest silent bug |
 
@@ -67,11 +67,11 @@ Copy into GitHub Issues so blockers are visible.
 |---|---|---|---|
 | U1 | Chat shell on `POST /ask_spec` | M | **Start here — zero model dependency** |
 | U2 | Breakdown table | S | |
-| U3 | Collapsible SQL + masked evidence rows | M | Highest-value element you will build |
+| U3 | ~~Collapsible SQL + masked evidence~~ | — | **done** — evidence provably matches the aggregate |
 | U4 | Refusal / clarification / warning states | M | Must look intentional, not like an error |
 | U5 | Confidence badge + anomaly flags | S | |
-| U6 | Export button | S | |
-| U7 | Anchor-date banner: "data through 24 Jun 2026" | S | Stops judges thinking dates are broken |
+| U6 | ~~Export button~~ | — | **done** (CSV + xlsx) |
+| U7 | ~~Anchor-date banner~~ | — | **done** — "Data through 29 Jun 2026" |
 
 ## Stream 5 — QA & story
 

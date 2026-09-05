@@ -77,3 +77,14 @@ def test_null_group_total_is_reported_not_dropped():
     out = compile_null_group_sql(QuerySpec(dataset="payouts", group_by=["counterparty"]), ANCHOR)
     assert out and "counterparty IS NULL" in out[0]
     assert compile_null_group_sql(QuerySpec(dataset="payouts"), ANCHOR) is None
+
+
+def test_evidence_rows_match_the_aggregate_row_set():
+    """The evidence panel must show the rows the number was computed from.
+    Showing rows the aggregate excluded breaks the grounding claim."""
+    from app.compiler import compile_evidence_sql
+    spec = QuerySpec(dataset="payouts", group_by=["counterparty"])
+    agg, _, _ = compile_sql(spec, ANCHOR)
+    ev, _ = compile_evidence_sql(spec, ANCHOR)
+    assert "counterparty IS NOT NULL" in agg
+    assert "counterparty IS NOT NULL" in ev

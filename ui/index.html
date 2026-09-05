@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Finance Assistant</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#fff; --ink:#15181d; --muted:#6b7280; --line:#e4e7ec;
+    --accent:#1f6feb; --accent-soft:#eaf1fe; --warn:#8a5a00; --warn-bg:#fff7e6;
+    --info:#0b5f57; --info-bg:#e8f6f4; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --bg:#0f1115; --panel:#171a21; --ink:#e8eaed; --muted:#98a2b3; --line:#262b35;
+           --accent:#6aa5ff; --accent-soft:#16263f; --warn:#e0b25a; --warn-bg:#2a2110;
+           --info:#7fd6c9; --info-bg:#10241f; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  header{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);
+         padding:14px 20px;display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
+  header h1{font-size:16px;margin:0;font-weight:650;letter-spacing:-.01em}
+  .anchor{font-size:12.5px;color:var(--muted)}
+  .anchor b{color:var(--ink);font-weight:600}
+  main{max-width:860px;margin:0 auto;padding:22px 20px 140px}
+  .msg{margin-bottom:22px}
+  .you{display:flex;justify-content:flex-end}
+  .you span{background:var(--accent);color:#fff;padding:9px 14px;border-radius:16px 16px 4px 16px;
+            max-width:75%}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .answer{font-size:15.5px}
+  .meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+  .chip{font-size:11.5px;padding:3px 9px;border-radius:20px;border:1px solid var(--line);
+        color:var(--muted);background:transparent}
+  .chip.high{color:var(--info);background:var(--info-bg);border-color:transparent}
+  .chip.medium,.chip.low{color:var(--warn);background:var(--warn-bg);border-color:transparent}
+  .note{margin-top:12px;padding:9px 12px;border-radius:8px;font-size:13px;
+        background:var(--warn-bg);color:var(--warn)}
+  .refusal .answer{color:var(--info)}
+  .refusal{border-left:3px solid var(--info)}
+  table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13.5px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .pos{color:#12805c} .neg{color:#c0392b}
+  .scroll{overflow-x:auto}
+  details{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+  summary{cursor:pointer;font-size:13px;color:var(--accent);font-weight:550;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"▸ ";font-size:11px}
+  details[open] summary::before{content:"▾ "}
+  pre{font:12.5px/1.5 var(--mono);background:var(--bg);border:1px solid var(--line);
+      border-radius:8px;padding:11px;overflow-x:auto;margin:10px 0 0}
+  .actions{margin-top:14px;display:flex;gap:8px}
+  button{font:inherit;font-size:13px;padding:6px 13px;border-radius:8px;cursor:pointer;
+         border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  footer{position:fixed;bottom:0;left:0;right:0;background:var(--panel);
+         border-top:1px solid var(--line);padding:14px 20px}
+  .bar{max-width:860px;margin:0 auto;display:flex;gap:10px}
+  #q{flex:1;font:inherit;padding:11px 14px;border:1px solid var(--line);border-radius:10px;
+     background:var(--bg);color:var(--ink)}
+  #q:focus{outline:none;border-color:var(--accent)}
+  #send{background:var(--accent);color:#fff;border-color:var(--accent);padding:11px 20px;font-weight:600}
+  .suggest{max-width:860px;margin:0 auto 10px;display:flex;gap:7px;flex-wrap:wrap}
+  .suggest button{font-size:12.5px;padding:5px 11px;color:var(--muted)}
+  .thinking{color:var(--muted);font-style:italic}
+</style>
+</head>
+<body>
+<header>
+  <h1>Finance Assistant</h1>
+  <span class="anchor" id="anchor">connecting…</span>
+</header>
+
+<main id="feed"></main>
+
+<footer>
+  <div class="suggest" id="suggest"></div>
+  <div class="bar">
+    <input id="q" placeholder="Ask about your spending…" autocomplete="off">
+    <button id="send">Ask</button>
+  </div>
+</footer>
+
+<script>
+const SESSION = Math.random().toString(36).slice(2);
+const feed = document.getElementById('feed');
+const inr = new Intl.NumberFormat('en-IN', {style:'currency', currency:'INR', maximumFractionDigits:0});
+const AMOUNT = /amount|value|previous|delta|balance/i;
+
+const SUGGESTIONS = [
+  "Where did I spend the most this month?",
+  "Total tax I paid in the last 3 months",
+  "Break my spending down by category",
+  "How does that compare to the month before?",
+  "Which transactions are unreconciled?",
+];
+
+// --- the assistant's "today" comes from the data, not the clock ------------
+fetch('/health').then(r => r.json()).then(h => {
+  const d = new Date(h.anchor_date + 'T00:00:00');
+  const nice = d.toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'});
+  const month = d.toLocaleDateString('en-IN', {month:'long', year:'numeric'});
+  document.getElementById('anchor').innerHTML =
+    `Data through <b>${nice}</b> — “this month” means ${month}`;
+}).catch(() => document.getElementById('anchor').textContent = 'backend unreachable');
+
+const sg = document.getElementById('suggest');
+SUGGESTIONS.forEach(s => {
+  const b = document.createElement('button');
+  b.textContent = s;
+  b.onclick = () => ask(s);
+  sg.appendChild(b);
+});
+
+function el(html){ const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstChild; }
+function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function fmt(key, v){
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'number') return AMOUNT.test(key) ? inr.format(v) : v.toLocaleString('en-IN');
+  if (/date/.test(key) && /^\d{4}-\d{2}/.test(v)) return String(v).slice(0, 19).replace('T', ' ');
+  return esc(v);
+}
+
+function table(rows, limit = 12){
+  if (!rows || !rows.length) return '';
+  const cols = Object.keys(rows[0]);
+  const head = cols.map(c => `<th class="${AMOUNT.test(c) ? 'num' : ''}">${esc(c.replace(/_/g,' '))}</th>`).join('');
+  const body = rows.slice(0, limit).map(r => '<tr>' + cols.map(c => {
+    const num = AMOUNT.test(c);
+    const cls = num ? (c === 'delta' && typeof r[c] === 'number' ? (r[c] >= 0 ? 'num pos' : 'num neg') : 'num') : '';
+    return `<td class="${cls}">${fmt(c, r[c])}</td>`;
+  }).join('') + '</tr>').join('');
+  const more = rows.length > limit ? `<div class="chip" style="margin-top:8px">+${rows.length - limit} more rows</div>` : '';
+  return `<div class="scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>${more}`;
+}
+
+function render(d){
+  const refused = d.refused;
+  const card = el(`<div class="card ${refused ? 'refusal' : ''}"></div>`);
+
+  card.appendChild(el(`<div class="answer">${esc(d.answer)}</div>`));
+
+  const meta = el('<div class="meta"></div>');
+  if (d.window) meta.appendChild(el(`<span class="chip">${esc(d.window)}</span>`));
+  if (!refused) meta.appendChild(el(`<span class="chip ${esc(d.confidence)}">confidence: ${esc(d.confidence)}</span>`));
+  if (refused) meta.appendChild(el(`<span class="chip">not answerable from this data</span>`));
+  card.appendChild(meta);
+
+  // Warnings carry real substance -- e.g. spend excluded from a ranking.
+  (d.warnings || []).forEach(w => card.appendChild(el(`<div class="note">${esc(w)}</div>`)));
+
+  if (d.comparison && d.comparison.rows && d.comparison.rows.length)
+    card.appendChild(el(table(d.comparison.rows)));
+  else if (d.breakdown && d.breakdown.length > (d.breakdown.length === 1 && Object.keys(d.breakdown[0]).length === 1 ? 1 : 0))
+    card.appendChild(el(table(d.breakdown)));
+
+  // The grounding panel: the exact query, and the rows behind the number.
+  if (d.sql){
+    const det = el('<details></details>');
+    det.appendChild(el('<summary>Show the query and the source records</summary>'));
+    det.appendChild(el(`<pre>${esc(d.sql)}</pre>`));
+    if (d.evidence && d.evidence.length){
+      det.appendChild(el(`<div class="chip" style="margin-top:12px">${d.evidence.length} source records (account numbers and UTRs masked)</div>`));
+      det.appendChild(el(table(d.evidence, 8)));
+    }
+    card.appendChild(det);
+  }
+
+  if (!refused && d.spec){
+    const actions = el('<div class="actions"></div>');
+    const csv = el('<button>Export CSV</button>');
+    csv.onclick = () => download(d.spec, 'csv');
+    const xls = el('<button>Export Excel</button>');
+    xls.onclick = () => download(d.spec, 'xlsx');
+    actions.appendChild(csv); actions.appendChild(xls);
+    card.appendChild(actions);
+  }
+  return card;
+}
+
+async function download(spec, fmt){
+  const r = await fetch(`/export?fmt=${fmt}`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(spec)});
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `breakdown.${fmt}`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function ask(question){
+  const q = document.getElementById('q');
+  q.value = '';
+  feed.appendChild(el(`<div class="msg you"><span>${esc(question)}</span></div>`));
+  const pending = el('<div class="msg"><div class="card thinking">Querying your transactions…</div></div>');
+  feed.appendChild(pending);
+  window.scrollTo(0, document.body.scrollHeight);
+
+  try {
+    const r = await fetch('/ask', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({question, session_id: SESSION})});
+    const d = await r.json();
+    const wrap = el('<div class="msg"></div>');
+    wrap.appendChild(render(d));
+    pending.replaceWith(wrap);
+  } catch (e) {
+    pending.replaceWith(el(`<div class="msg"><div class="card refusal"><div class="answer">Could not reach the backend: ${esc(e.message)}</div></div></div>`));
+  }
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
+document.getElementById('send').onclick = () => {
+  const v = document.getElementById('q').value.trim();
+  if (v) ask(v);
+};
+document.getElementById('q').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('send').click();
+});
+</script>
+</body>
+</html>

@@ -63,3 +63,29 @@ def test_comparison_queries_ignore_the_display_limit(monkeypatch):
                      compare_to=DateRange(kind="relative", unit="month", offset=-1))
     _compare(spec, pd.DataFrame({"counterparty": ["A"], "sum_amount": [1.0]}), [])
     assert all("LIMIT 5" not in s for s in seen[1:]), seen
+
+
+def test_mismatched_comparison_periods_are_flagged(monkeypatch):
+    """A 3-month window vs a 1-month window yields a confident, meaningless
+    percentage. It must be called out, not reported as a change."""
+    import app.api as api
+    monkeypatch.setattr(api, "run", lambda *a, **k: pd.DataFrame({"sum_amount": [1.0]}))
+    monkeypatch.setattr(api, "anchor_date", lambda: datetime.date(2026, 6, 24))
+    spec = QuerySpec(dataset="payouts",
+                     date_range=DateRange(kind="relative", unit="month", offset=0, periods=3),
+                     compare_to=DateRange(kind="relative", unit="month", offset=-1, periods=1))
+    warnings = []
+    _compare(spec, pd.DataFrame({"sum_amount": [1.0]}), warnings)
+    assert any("differ in length" in w for w in warnings)
+
+
+def test_equal_length_comparison_is_not_flagged(monkeypatch):
+    import app.api as api
+    monkeypatch.setattr(api, "run", lambda *a, **k: pd.DataFrame({"sum_amount": [1.0]}))
+    monkeypatch.setattr(api, "anchor_date", lambda: datetime.date(2026, 6, 24))
+    spec = QuerySpec(dataset="payouts",
+                     date_range=DateRange(kind="relative", unit="month", offset=0, periods=3),
+                     compare_to=DateRange(kind="relative", unit="month", offset=-3, periods=3))
+    warnings = []
+    _compare(spec, pd.DataFrame({"sum_amount": [1.0]}), warnings)
+    assert not any("differ in length" in w for w in warnings)

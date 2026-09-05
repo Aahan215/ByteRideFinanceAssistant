@@ -1,5 +1,8 @@
 """FastAPI surface. The UI owner codes against THIS, starting hour one."""
 from __future__ import annotations
+import os
+import pathlib
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -49,6 +52,7 @@ class Answer(BaseModel):
     comparison: Comparison | None = None
     warnings: list[str] = []
     refused: bool = False
+    spec: dict | None = None       # what we actually ran -- powers export + "show your working"
 
 
 def answer_spec(spec: QuerySpec, question: str = "") -> Answer:
@@ -85,14 +89,27 @@ def answer_spec(spec: QuerySpec, question: str = "") -> Answer:
 
     return Answer(answer=text, sql=sql, window=window,
                   breakdown=_clean(df), evidence=_clean(ev.head(25)),
-                  comparison=comparison, warnings=warnings)
+                  comparison=comparison, warnings=warnings,
+                  spec=spec.model_dump(mode="json"))
 
 
 def _compare(spec: QuerySpec, df, warnings: list[str]) -> Comparison:
     """Period-over-period. Runs the SAME spec against a second window and diffs
     the results here -- the model is never asked to subtract two numbers."""
     anchor = anchor_date()
-    prev_window = describe(*resolve(spec.compare_to, anchor))
+    base_start, base_end = resolve(spec.date_range, anchor)
+    cmp_start, cmp_end = resolve(spec.compare_to, anchor)
+    prev_window = describe(cmp_start, cmp_end)
+
+    # Comparing a 3-month window against a 1-month window produces a confident,
+    # meaningless percentage. Say so rather than reporting it as a change.
+    if base_start and base_end and cmp_start and cmp_end:
+        base_days = (base_end - base_start).days
+        cmp_days = (cmp_end - cmp_start).days
+        if base_days and abs(base_days - cmp_days) > 1:
+            warnings.append(
+                f"Comparison periods differ in length ({base_days} days vs "
+                f"{cmp_days} days), so the change is not like-for-like.")
 
     def _pct(now, before):
         if before in (None, 0) or now is None:
@@ -139,15 +156,38 @@ def _compare(spec: QuerySpec, df, warnings: list[str]) -> Comparison:
 
 @app.get("/health")
 def health():
+    """The anchor date matters to the UI: it is the assistant's "today", so a
+    banner can tell the user what "this month" actually resolves to."""
     return {"ok": True, "anchor_date": str(anchor_date())}
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    from fastapi.responses import FileResponse
+    return FileResponse(pathlib.Path(__file__).resolve().parent.parent / "ui" / "index.html")
+
+
+STUB = os.getenv("FINANCE_STUB_PLANNER") == "1"
 
 
 @app.post("/ask", response_model=Answer)
 def ask(req: Ask):
-    from app.planner import plan_with_confidence
     from app.llm import ModelUnavailable
 
     prior = SESSIONS.get(req.session_id)
+
+    if STUB:
+        # Development aid only -- see app/stub_planner.py.
+        from app.stub_planner import plan as stub_plan
+        spec = stub_plan(req.question, prior)
+        SESSIONS[req.session_id] = spec
+        out = answer_spec(spec, req.question)
+        out.confidence = "n/a"
+        out.warnings.insert(0, "STUB PLANNER — keyword rules, not the language "
+                               "model. Unset FINANCE_STUB_PLANNER before demoing.")
+        return out
+
+    from app.planner import plan_with_confidence
     try:
         result = plan_with_confidence(req.question, prior)
     except ModelUnavailable as e:

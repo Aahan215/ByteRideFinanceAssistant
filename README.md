@@ -11,8 +11,16 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python scripts/load_data.py  # falls back to data/sample/seed.sql until the
                              # organisers' CSVs land in data/raw/
-uvicorn app.api:app --reload
+uvicorn app.api:app --reload      # UI at http://localhost:8000
 ```
+
+No model yet? Develop the UI against keyword rules instead:
+
+```bash
+FINANCE_STUB_PLANNER=1 uvicorn app.api:app --reload
+```
+
+Every response is then tagged STUB PLANNER on screen. Unset it before demoing.
 
 `GET /health` returns the **anchor date** — the assistant's "today", taken from
 the max date in the data rather than the wall clock.

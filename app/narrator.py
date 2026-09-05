@@ -5,6 +5,30 @@ from app.validator import numeric_guard
 SYSTEM = """You explain a finance result table in two sentences.
 Use ONLY numbers that appear in the table. Do not estimate, round, or extrapolate."""
 
+# Plain "{:,.2f}" formatting disagrees with the Indian grouping the UI uses,
+# so the same figure appears two different ways on one screen.
+def inr(x) -> str:
+    if x is None:
+        return "-"
+    neg, n = x < 0, abs(round(float(x)))
+    s = str(n)
+    if len(s) > 3:                       # 2,02,07,329 -- last 3, then pairs
+        head, tail = s[:-3], s[-3:]
+        parts = []
+        while len(head) > 2:
+            parts.insert(0, head[-2:]); head = head[:-2]
+        if head:
+            parts.insert(0, head)
+        s = ",".join(parts + [tail])
+    return f"{'-' if neg else ''}\u20b9{s}"
+
+
+# "counterpartys" is not a word, and it is on screen next to real numbers.
+LABELS = {"counterparty": "vendors", "category": "categories", "channel": "channels",
+          "bank_name": "banks", "month": "months", "quarter": "quarters",
+          "transaction_type": "transaction types", "account_id": "accounts",
+          "entity_id": "entities", "program_id": "programs"}
+
 
 def narrate(question: str, df, spec, window_desc: str) -> str:
     """TODO(owner: narrator): call the small model, then run numeric_guard().
@@ -26,10 +50,15 @@ def template(df, spec, window_desc: str) -> str:
         return f"No{what} transactions found for {window_desc}."
 
     if not spec.group_by:
-        return f"{spec.metric.replace('_', ' ')} for {window_desc}: {value:,.2f}"
+        label = {"sum_amount": "Total", "count": "Count", "avg_amount": "Average",
+                 "max_amount": "Largest", "min_amount": "Smallest"}[spec.metric]
+        shown = f"{int(value):,}" if spec.metric == "count" else inr(value)
+        return f"{label} for {window_desc}: {shown}"
     top = df.iloc[0]
-    return (f"Across {len(df)} {spec.group_by[0]}s for {window_desc}, "
-            f"{top[spec.group_by[0]]} is highest at {top[spec.metric]:,.2f}.")
+    key = spec.group_by[0]
+    shown = f"{int(top[spec.metric]):,}" if spec.metric == "count" else inr(top[spec.metric])
+    return (f"Across {len(df)} {LABELS.get(key, key + 's')} for {window_desc}, "
+            f"{top[key]} is highest at {shown}.")
 
 
 def with_comparison(text: str, comp, spec) -> str:
@@ -42,7 +71,7 @@ def with_comparison(text: str, comp, spec) -> str:
             return f"{text} No comparable figure for {comp.window}."
         direction = "up" if comp.delta > 0 else "down" if comp.delta < 0 else "flat"
         pct = f" ({abs(comp.delta_pct):.1f}%)" if comp.delta_pct is not None else ""
-        return (f"{text} That is {direction} {abs(comp.delta):,.2f}{pct} "
+        return (f"{text} That is {direction} {inr(abs(comp.delta))}{pct} "
                 f"versus {comp.window}.")
     movers = [r for r in comp.rows if r.get("delta") is not None]
     if not movers:
@@ -51,10 +80,10 @@ def with_comparison(text: str, comp, spec) -> str:
     key = spec.group_by[0]
     if top["value"] == 0 and top["previous"]:
         return (f"{text} Compared with {comp.window}, the biggest move is "
-                f"{top[key]}: {abs(top['delta']):,.2f} last period, nothing this one.")
+                f"{top[key]}: {inr(abs(top['delta']))} last period, nothing this one.")
     if top["previous"] == 0 and top["value"]:
         return (f"{text} Compared with {comp.window}, the biggest move is "
-                f"{top[key]}: new this period at {top['value']:,.2f}.")
+                f"{top[key]}: new this period at {inr(top['value'])}.")
     verb = "up" if top["delta"] > 0 else "down"
     return (f"{text} Compared with {comp.window}, the biggest move is "
-            f"{top[key]}, {verb} {abs(top['delta']):,.2f}.")
+            f"{top[key]}, {verb} {inr(abs(top['delta']))}.")

@@ -117,12 +117,20 @@ def evidence_columns() -> str:
 
 
 def compile_evidence_sql(spec: QuerySpec, anchor, limit: int = 200):
-    """The rows behind the number. Required by 'verifiable answers'."""
+    """The rows behind the number. Required by 'verifiable answers'.
+
+    Must apply EVERY predicate the aggregate applies, including the
+    IS NOT NULL guards added for grouped queries. Showing rows the aggregate
+    excluded is a grounding failure in the panel whose whole job is to prove
+    grounding.
+    """
     ds = SEMANTIC["datasets"][spec.dataset]
     view, date_col, amt_col = ds["view"], ds["date_column"], ds["amount_column"]
     where, params = _where(spec, date_col, amt_col)
     if ds.get("fixed_filter"):
         where.insert(0, ds["fixed_filter"])
+    for dim in spec.group_by:
+        where.append(f"{_dim_expr(dim, date_col)} IS NOT NULL")
     start, end = resolve(spec.date_range, anchor)
     if start:
         where.append(f"{date_col} >= ?"); params.append(start)

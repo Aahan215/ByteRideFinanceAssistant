@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "finance-assistant",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "FINANCE_STUB_PLANNER=1 ./.venv/bin/uvicorn app.api:app --port 8765"],
+      "port": 8765
+    }
+  ]
+}
