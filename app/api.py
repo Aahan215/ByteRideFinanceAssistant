@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os
 import pathlib
+import re
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,7 +12,7 @@ from app.db import anchor_date, run
 from app.spec import QuerySpec
 from app.compiler import (compile_sql, compile_evidence_sql,
                           compile_null_group_sql, compile_count_sql,
-                          compile_anomaly_sql)
+                          compile_anomaly_sql, render_sql)
 import duckdb
 import pandas as pd
 
@@ -100,9 +101,40 @@ class Answer(BaseModel):
     escalated: bool = False
 
 
+
+# `category` is a narration-keyword bucket (TRANSFER, SALARY, EMI_LOAN, CASH...),
+# not the "food/rent/utilities" spend categories a plain "break down my
+# spending by category" implies. Rather than guess, ask once -- the two
+# suggested follow-ups resolve deterministically in app.planner (dataset_from_words
+# keeps "payouts", wants_discretionary_only sets the narrower exclude_categories),
+# so this never loops.
+_ALL_CATEGORIES_RE = re.compile(r"\ball (payout )?categories\b", re.I)
+_DISCRETIONARY_ONLY_RE = re.compile(r"\bdiscretionary\b", re.I)
+
+
+def _needs_category_scope_clarification(spec: QuerySpec, question: str) -> bool:
+    if not question or spec.group_by != ["category"] or spec.dataset != "payouts":
+        return False
+    if spec.filters.category or spec.filters.exclude_categories:
+        return False
+    return not (_ALL_CATEGORIES_RE.search(question) or _DISCRETIONARY_ONLY_RE.search(question))
+
+
 def answer_spec(spec: QuerySpec, question: str = "", scope=None) -> Answer:
     """Everything downstream of the planner. Testable with hand-written specs,
     which is why the backend team is not blocked on the model team."""
+    if _needs_category_scope_clarification(spec, question):
+        return Answer(
+            answer="Do you want the full breakdown, including transfers, salary "
+                   "payouts and loan EMIs -- or just discretionary spending, like "
+                   "food, fuel and shopping?",
+            refused=True, confidence="n/a",
+            clarification="All categories, or just discretionary spending?",
+            suggestions=[
+                f"{question} — all categories, including transfers, salary and EMIs",
+                f"{question} — just discretionary spending (food, fuel, shopping, etc.)",
+            ])
+
     v = validator.validate(spec)
     if not v.ok:
         return Answer(answer=v.refusal or v.clarification, refused=True, confidence="n/a",
@@ -182,7 +214,7 @@ def answer_spec(spec: QuerySpec, question: str = "", scope=None) -> Answer:
                           unattributed_rows=unattributed_rows,
                           warnings=warnings, comparison_mismatch=mismatch)
 
-    return Answer(answer=text, sql=sql, window=window,
+    return Answer(answer=text, sql=render_sql(sql, params), window=window,
                   breakdown=_clean(df), evidence=_clean(ev.head(25)),
                   comparison=comparison, warnings=warnings,
                   anomalies=[f.sentence() for f in flags],

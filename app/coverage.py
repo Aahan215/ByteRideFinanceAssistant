@@ -89,6 +89,7 @@ sometimes mostly mainly largely generally roughly approximately nearly almost
 HANDLED_SHAPES = """
 save saving savings cut cutting control controlling reduce reducing trim tighten
 unusual anomaly anomalies outlier outliers suspicious odd weird strange
+discretionary
 """.split()
 
 # Question grammar and glue. Generous on purpose: a false refusal on "please"
@@ -112,6 +113,7 @@ couldn't won't wouldn't shouldn't isnt arent wasnt hasnt havent doesnt dont didn
 whole entire overall everything anything something nothing where anywhere
 someone anyone everyone all both either neither around roughly approximately
 exactly about wise basis vs etc e.g i.e
+including include includes excluding exclude excludes
 """.split()
 
 # Nouns that belong to the assistant itself rather than the data.

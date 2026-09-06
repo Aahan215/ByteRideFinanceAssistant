@@ -5,6 +5,7 @@ dimensions are looked up in the semantic-layer allow-list, and every literal
 goes through a bound parameter.
 """
 from __future__ import annotations
+import re
 from app.db import SEMANTIC
 from app.dates import resolve
 from app.spec import QuerySpec
@@ -172,6 +173,25 @@ def compile_anomaly_sql(spec: QuerySpec, anchor, limit: int = 3, scope=None):
            f"typical_amount, history_n AS n, anomaly_score AS score FROM {view} "
            f"WHERE {' AND '.join(where)} ORDER BY anomaly_score DESC LIMIT {limit * 4}")
     return sql, params
+
+
+def render_sql(sql: str, params: list) -> str:
+    """Splice bound values back into a `?`-parameterised query, for display
+    only -- never for execution. Lets the "show your working" panel read like
+    the query that actually ran instead of a wall of question marks."""
+    it = iter(params)
+
+    def repl(_):
+        val = next(it)
+        if val is None:
+            return "NULL"
+        if isinstance(val, bool):
+            return "TRUE" if val else "FALSE"
+        if isinstance(val, (int, float)):
+            return str(val)
+        return "'" + str(val).replace("'", "''") + "'"
+
+    return re.sub(r"\?", repl, sql)
 
 
 def evidence_columns() -> str:

@@ -93,6 +93,13 @@ reference_columns:
 committed_categories: [TAX, EMI_LOAN, RENT, INSURANCE, INVESTMENT,
                        INTEREST, BANK_CHARGES, SALARY]
 
+# The categories derived from the MERCHANT rather than a narration keyword --
+# the "food/rent/utilities"-style buckets a user pictures when they say
+# "spending", as opposed to TRANSFER (a channel-default catch-all) or SALARY
+# (payroll disbursed). Used to answer "just discretionary spending" narrowly.
+discretionary_categories: [FOOD, GROCERIES, FUEL, HEALTHCARE, JEWELLERY,
+                           APPAREL, ELECTRONICS, HOME]
+
 spend_categories: [TAX, BANK_CHARGES, INTEREST, EMI_LOAN, SALARY, UTILITIES,
                    INSURANCE, INVESTMENT, CASH, CHEQUE, RENT,
                    # derived from the MERCHANT rather than the narration keywords

@@ -450,6 +450,17 @@ def wants_savings_view(question: str) -> bool:
     return bool(SAVINGS_RE.search(question))
 
 
+# The category-scope clarification (app/api.py) offers "just discretionary
+# spending" as one of the two options. This is the phrase that answer picks
+# back up on the resulting question, so it must resolve deterministically
+# rather than round-trip through the model.
+DISCRETIONARY_RE = re.compile(r"\bdiscretionary\b", re.I)
+
+
+def wants_discretionary_only(question: str) -> bool:
+    return bool(DISCRETIONARY_RE.search(question))
+
+
 def dataset_from_words(question: str) -> str | None:
     """Only fires on an explicit cue, so a follow-up that says nothing about
     direction leaves the prior dataset alone."""
@@ -982,6 +993,19 @@ def plan_detailed(question: str, prior: QuerySpec | None = None, *,
         committed = SEMANTIC.get("committed_categories", [])
         spec = spec.model_copy(update={"dataset": "payouts", "group_by": ["category"]})
         spec.filters.exclude_categories = committed
+
+    # The other half of the category-scope clarification: "just discretionary
+    # spending" means the merchant-derived categories only, not every bucket
+    # the narration parser happens to produce (TRANSFER, SALARY, EMI_LOAN...).
+    # Override deterministically -- "discretionary" is not a real category, and
+    # the model reaching for it as a filter value is exactly the refusal this
+    # phrase must never hit, since it is our own suggested follow-up text.
+    if wants_discretionary_only(question):
+        discretionary = set(SEMANTIC.get("discretionary_categories", []))
+        all_cats = [c for c in SEMANTIC.get("spend_categories", []) if c != "UNCATEGORISED"]
+        spec = spec.model_copy(update={"group_by": ["category"]})
+        spec.filters.category = None
+        spec.filters.exclude_categories = [c for c in all_cats if c not in discretionary]
 
     # A trend question is about time. If nothing meaningful is left to group by,
     # group by month -- that is what "trend" means.
